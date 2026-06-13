@@ -1,0 +1,115 @@
+{
+  "dataset": "bigquery-public-data.thelook_ecommerce",
+  "tables": [
+    {
+      "table_name": "orders",
+      "description": "Customer order records including status and lifecycle timestamps.",
+      "columns": [
+        {"name": "order_id", "type": "INTEGER", "description": "Unique identifier for the order"},
+        {"name": "user_id", "type": "INTEGER", "description": "Identifier of the customer who placed the order"},
+        {"name": "status", "type": "STRING", "description": "Order status: Complete, Shipped, Processing, Cancelled, Returned"},
+        {"name": "gender", "type": "STRING", "description": "Gender of the customer"},
+        {"name": "created_at", "type": "TIMESTAMP", "description": "When the order was placed"},
+        {"name": "returned_at", "type": "TIMESTAMP", "description": "When the order was returned, if applicable"},
+        {"name": "shipped_at", "type": "TIMESTAMP", "description": "When the order was shipped"},
+        {"name": "delivered_at", "type": "TIMESTAMP", "description": "When the order was delivered"},
+        {"name": "num_of_item", "type": "INTEGER", "description": "Number of items in the order"}
+      ]
+    },
+    {
+      "table_name": "order_items",
+      "description": "Line items within each order, including sale price and fulfillment status.",
+      "columns": [
+        {"name": "id", "type": "INTEGER", "description": "Unique identifier for the order item"},
+        {"name": "order_id", "type": "INTEGER", "description": "Identifier of the parent order"},
+        {"name": "user_id", "type": "INTEGER", "description": "Identifier of the customer"},
+        {"name": "product_id", "type": "INTEGER", "description": "Identifier of the product purchased"},
+        {"name": "inventory_item_id", "type": "INTEGER", "description": "Identifier of the specific inventory unit sold"},
+        {"name": "status", "type": "STRING", "description": "Fulfillment status of this line item"},
+        {"name": "created_at", "type": "TIMESTAMP", "description": "When the line item was created"},
+        {"name": "shipped_at", "type": "TIMESTAMP", "description": "When the line item was shipped"},
+        {"name": "delivered_at", "type": "TIMESTAMP", "description": "When the line item was delivered"},
+        {"name": "returned_at", "type": "TIMESTAMP", "description": "When the line item was returned"},
+        {"name": "sale_price", "type": "FLOAT", "description": "Price the item was sold for - used for revenue calculations"}
+      ]
+    },
+    {
+      "table_name": "products",
+      "description": "Product catalog with pricing, category, and brand information.",
+      "columns": [
+        {"name": "id", "type": "INTEGER", "description": "Unique identifier for the product"},
+        {"name": "cost", "type": "FLOAT", "description": "Wholesale cost of the product"},
+        {"name": "category", "type": "STRING", "description": "Product category, e.g. Jeans, Tops & Tees"},
+        {"name": "name", "type": "STRING", "description": "Product name"},
+        {"name": "brand", "type": "STRING", "description": "Product brand"},
+        {"name": "retail_price", "type": "FLOAT", "description": "Retail price shown to customers"},
+        {"name": "department", "type": "STRING", "description": "Department: Men or Women"},
+        {"name": "sku", "type": "STRING", "description": "Stock keeping unit identifier"},
+        {"name": "distribution_center_id", "type": "INTEGER", "description": "Identifier of the distribution center stocking this product"}
+      ]
+    },
+    {
+      "table_name": "users",
+      "description": "Customer records including demographics and location.",
+      "columns": [
+        {"name": "id", "type": "INTEGER", "description": "Unique identifier for the customer"},
+        {"name": "first_name", "type": "STRING", "description": "Customer first name"},
+        {"name": "last_name", "type": "STRING", "description": "Customer last name"},
+        {"name": "email", "type": "STRING", "description": "Customer email address"},
+        {"name": "age", "type": "INTEGER", "description": "Customer age"},
+        {"name": "gender", "type": "STRING", "description": "Customer gender"},
+        {"name": "state", "type": "STRING", "description": "Customer state"},
+        {"name": "street_address", "type": "STRING", "description": "Customer street address"},
+        {"name": "postal_code", "type": "STRING", "description": "Customer postal code"},
+        {"name": "city", "type": "STRING", "description": "Customer city"},
+        {"name": "country", "type": "STRING", "description": "Customer country"},
+        {"name": "traffic_source", "type": "STRING", "description": "Marketing channel that acquired the customer"},
+        {"name": "created_at", "type": "TIMESTAMP", "description": "When the customer account was created"}
+      ]
+    },
+    {
+      "table_name": "inventory_items",
+      "description": "Individual inventory units tracked from purchase to sale, including cost basis.",
+      "columns": [
+        {"name": "id", "type": "INTEGER", "description": "Unique identifier for the inventory item"},
+        {"name": "product_id", "type": "INTEGER", "description": "Identifier of the related product"},
+        {"name": "created_at", "type": "TIMESTAMP", "description": "When the inventory item was created"},
+        {"name": "sold_at", "type": "TIMESTAMP", "description": "When the inventory item was sold"},
+        {"name": "cost", "type": "FLOAT", "description": "Cost basis of the inventory item"},
+        {"name": "product_category", "type": "STRING", "description": "Category of the related product"},
+        {"name": "product_name", "type": "STRING", "description": "Name of the related product"},
+        {"name": "product_brand", "type": "STRING", "description": "Brand of the related product"},
+        {"name": "product_retail_price", "type": "FLOAT", "description": "Retail price of the related product"},
+        {"name": "product_department", "type": "STRING", "description": "Department of the related product"},
+        {"name": "product_distribution_center_id", "type": "INTEGER", "description": "Distribution center holding this item"}
+      ]
+    },
+    {
+      "table_name": "distribution_centers",
+      "description": "Warehouse locations that fulfill orders.",
+      "columns": [
+        {"name": "id", "type": "INTEGER", "description": "Unique identifier for the distribution center"},
+        {"name": "name", "type": "STRING", "description": "Name of the distribution center"},
+        {"name": "latitude", "type": "FLOAT", "description": "Latitude of the distribution center"},
+        {"name": "longitude", "type": "FLOAT", "description": "Longitude of the distribution center"}
+      ]
+    },
+    {
+      "table_name": "events",
+      "description": "Website clickstream events for each user session.",
+      "columns": [
+        {"name": "id", "type": "INTEGER", "description": "Unique identifier for the event"},
+        {"name": "user_id", "type": "INTEGER", "description": "Identifier of the user, if logged in"},
+        {"name": "sequence_number", "type": "INTEGER", "description": "Order of the event within the session"},
+        {"name": "session_id", "type": "STRING", "description": "Identifier of the browsing session"},
+        {"name": "created_at", "type": "TIMESTAMP", "description": "When the event occurred"},
+        {"name": "city", "type": "STRING", "description": "City of the user"},
+        {"name": "state", "type": "STRING", "description": "State of the user"},
+        {"name": "browser", "type": "STRING", "description": "Browser used"},
+        {"name": "traffic_source", "type": "STRING", "description": "Marketing channel for this session"},
+        {"name": "uri", "type": "STRING", "description": "Page URI visited"},
+        {"name": "event_type", "type": "STRING", "description": "Type of event: home, product, cart, purchase, etc."}
+      ]
+    }
+  ]
+}
