@@ -21,7 +21,7 @@ st.set_page_config(page_title="Data Catalog Assistant", page_icon="🗂️", lay
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SOURCE_DATASET = "bigquery-public-data.thelook_ecommerce"
-GEN_MODEL      = "gemini-2.0-flash"
+GEN_MODEL      = "gemini-1.5-flash"
 MAX_ROWS       = 100   # row limit enforced on any executed query
 MAX_BYTES      = 200 * 1024 * 1024   # 200 MB cap per query - keeps cost at $0
 
