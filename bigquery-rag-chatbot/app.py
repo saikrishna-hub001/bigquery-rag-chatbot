@@ -21,14 +21,38 @@ st.set_page_config(page_title="Data Catalog Assistant", page_icon="🗂️", lay
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SOURCE_DATASET = "bigquery-public-data.thelook_ecommerce"
-GEN_MODEL      = "gemini-1.5-flash"
 MAX_ROWS       = 100   # row limit enforced on any executed query
 MAX_BYTES      = 200 * 1024 * 1024   # 200 MB cap per query - keeps cost at $0
 
 
 # ── Setup: Gemini ────────────────────────────────────────────────────────────
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-gen_model = genai.GenerativeModel(GEN_MODEL)
+
+
+@st.cache_resource
+def get_gen_model():
+    """Pick the first available model that supports generateContent."""
+    preferred = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-flash-latest", "gemini-pro-latest"]
+    available = {}
+    for m in genai.list_models():
+        if "generateContent" in m.supported_generation_methods:
+            available[m.name] = m
+
+    for pref in preferred:
+        full_name = f"models/{pref}"
+        if full_name in available:
+            return genai.GenerativeModel(pref), pref
+
+    # Fall back to whatever the first available model is
+    if available:
+        first = next(iter(available.values()))
+        short_name = first.name.replace("models/", "")
+        return genai.GenerativeModel(short_name), short_name
+
+    raise RuntimeError("No Gemini models available for this API key.")
+
+
+gen_model, GEN_MODEL = get_gen_model()
 
 
 # ── Setup: BigQuery (read-only service account) ─────────────────────────────
