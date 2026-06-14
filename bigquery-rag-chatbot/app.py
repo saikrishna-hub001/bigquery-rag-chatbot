@@ -1,7 +1,7 @@
 """
 BigQuery RAG Data Catalog Assistant
 A chatbot that answers natural language questions about a BigQuery dataset
-using RAG (Gemini embeddings + cosine similarity retrieval) and Gemini for
+using RAG (TF-IDF retrieval over table/column metadata) and Gemini for
 generation, including SQL generation with optional safe execution.
 """
 
@@ -13,13 +13,14 @@ import streamlit as st
 import google.generativeai as genai
 from google.cloud import bigquery
 from google.oauth2 import service_account
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Data Catalog Assistant", page_icon="🗂️", layout="centered")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SOURCE_DATASET = "bigquery-public-data.thelook_ecommerce"
-EMBED_MODEL    = "models/text-embedding-004"
 GEN_MODEL      = "gemini-2.0-flash"
 MAX_ROWS       = 100   # row limit enforced on any executed query
 MAX_BYTES      = 200 * 1024 * 1024   # 200 MB cap per query - keeps cost at $0
@@ -41,7 +42,7 @@ def get_bq_client():
     return bigquery.Client(credentials=credentials, project=creds_dict["project_id"])
 
 
-# ── Load metadata + build embeddings (cached once per session) ──────────────
+# ── Load metadata + build TF-IDF index (cached once per session) ────────────
 @st.cache_resource
 def load_index():
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -61,31 +62,16 @@ def load_index():
         )
         docs.append({"table_name": table["table_name"], "text": doc, "raw": table})
 
-    # Embed all table docs in one batch call
-    embeddings = []
-    for d in docs:
-        result = genai.embed_content(
-            model=EMBED_MODEL,
-            content=d["text"],
-            task_type="retrieval_document",
-        )
-        embeddings.append(result["embedding"])
+    # Build TF-IDF vectors over table/column metadata - no external API calls needed
+    vectorizer = TfidfVectorizer(stop_words="english")
+    doc_vectors = vectorizer.fit_transform([d["text"] for d in docs])
 
-    return docs, np.array(embeddings), metadata
+    return docs, vectorizer, doc_vectors, metadata
 
 
-def retrieve(query: str, docs, embeddings, top_k: int = 3):
-    q_emb = genai.embed_content(
-        model=EMBED_MODEL,
-        content=query,
-        task_type="retrieval_query",
-    )["embedding"]
-    q_emb = np.array(q_emb)
-
-    # Cosine similarity
-    norms = np.linalg.norm(embeddings, axis=1) * np.linalg.norm(q_emb)
-    sims = embeddings @ q_emb / norms
-
+def retrieve(query: str, docs, vectorizer, doc_vectors, top_k: int = 3):
+    q_vec = vectorizer.transform([query])
+    sims = cosine_similarity(q_vec, doc_vectors).flatten()
     top_idx = np.argsort(sims)[::-1][:top_k]
     return [docs[i] for i in top_idx]
 
@@ -139,7 +125,7 @@ with st.sidebar:
     st.subheader("Connected dataset")
     st.code(SOURCE_DATASET, language=None)
 
-    docs, embeddings, metadata = load_index()
+    docs, vectorizer, doc_vectors, metadata = load_index()
     st.metric("Tables indexed", len(docs))
     total_cols = sum(len(t["columns"]) for t in metadata["tables"])
     st.metric("Columns embedded", total_cols)
@@ -194,7 +180,7 @@ if prompt:
 
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            context_docs = retrieve(prompt, docs, embeddings)
+            context_docs = retrieve(prompt, docs, vectorizer, doc_vectors)
             full_prompt = build_prompt(prompt, context_docs)
             response = gen_model.generate_content(full_prompt)
             answer = response.text
