@@ -6,6 +6,7 @@ generation, including SQL generation with optional safe execution.
 """
 
 import json
+import os
 import re
 import numpy as np
 import streamlit as st
@@ -43,7 +44,9 @@ def get_bq_client():
 # ── Load metadata + build embeddings (cached once per session) ──────────────
 @st.cache_resource
 def load_index():
-    with open("data/metadata.json") as f:
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    metadata_path = os.path.join(base_dir, "data", "metadata.json")
+    with open(metadata_path) as f:
         metadata = json.load(f)
 
     docs = []
