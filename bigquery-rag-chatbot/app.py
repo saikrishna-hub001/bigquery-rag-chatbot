@@ -1,8 +1,8 @@
 """
 BigQuery RAG Data Catalog Assistant
 A chatbot that answers natural language questions about a BigQuery dataset
-using RAG (TF-IDF retrieval over table/column metadata) and Gemini for
-generation, including SQL generation with optional safe execution.
+using RAG (TF-IDF retrieval over table/column metadata) and Groq (Llama 3.3)
+for generation, including SQL generation with optional safe execution.
 """
 
 import json
@@ -10,7 +10,7 @@ import os
 import re
 import numpy as np
 import streamlit as st
-import google.generativeai as genai
+from groq import Groq
 from google.cloud import bigquery
 from google.oauth2 import service_account
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -21,38 +21,27 @@ st.set_page_config(page_title="Data Catalog Assistant", page_icon="🗂️", lay
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SOURCE_DATASET = "bigquery-public-data.thelook_ecommerce"
+GEN_MODEL      = "llama-3.3-70b-versatile"
 MAX_ROWS       = 100   # row limit enforced on any executed query
 MAX_BYTES      = 200 * 1024 * 1024   # 200 MB cap per query - keeps cost at $0
 
 
-# ── Setup: Gemini ────────────────────────────────────────────────────────────
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-
-
+# ── Setup: Groq ──────────────────────────────────────────────────────────────
 @st.cache_resource
-def get_gen_model():
-    """Pick the first available model that supports generateContent."""
-    preferred = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-flash-latest", "gemini-pro-latest"]
-    available = {}
-    for m in genai.list_models():
-        if "generateContent" in m.supported_generation_methods:
-            available[m.name] = m
-
-    for pref in preferred:
-        full_name = f"models/{pref}"
-        if full_name in available:
-            return genai.GenerativeModel(pref), pref
-
-    # Fall back to whatever the first available model is
-    if available:
-        first = next(iter(available.values()))
-        short_name = first.name.replace("models/", "")
-        return genai.GenerativeModel(short_name), short_name
-
-    raise RuntimeError("No Gemini models available for this API key.")
+def get_groq_client():
+    return Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 
-gen_model, GEN_MODEL = get_gen_model()
+groq_client = get_groq_client()
+
+
+def generate(prompt: str) -> str:
+    response = groq_client.chat.completions.create(
+        model=GEN_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2,
+    )
+    return response.choices[0].message.content
 
 
 # ── Setup: BigQuery (read-only service account) ─────────────────────────────
@@ -143,7 +132,7 @@ def run_query_safely(sql: str):
 # ── UI ────────────────────────────────────────────────────────────────────────
 
 st.title("🗂️ Data Catalog Assistant")
-st.caption(f"Ask natural language questions about `{SOURCE_DATASET}` — powered by Gemini + RAG")
+st.caption(f"Ask natural language questions about `{SOURCE_DATASET}` — powered by Groq (Llama 3.3) + RAG")
 
 with st.sidebar:
     st.subheader("Connected dataset")
@@ -206,8 +195,7 @@ if prompt:
         with st.spinner("Thinking..."):
             context_docs = retrieve(prompt, docs, vectorizer, doc_vectors)
             full_prompt = build_prompt(prompt, context_docs)
-            response = gen_model.generate_content(full_prompt)
-            answer = response.text
+            answer = generate(full_prompt)
 
         sql = extract_sql(answer)
         st.markdown(answer)
