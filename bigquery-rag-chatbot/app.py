@@ -111,6 +111,11 @@ def extract_sql(text: str) -> str | None:
     return match.group(1).strip() if match else None
 
 
+def strip_sql_block(text: str) -> str:
+    """Remove the ```sql ... ``` block from the answer text, since it's rendered separately."""
+    return re.sub(r"```sql\s*.*?```", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+
+
 def enforce_limit(sql: str) -> str:
     """Add a LIMIT clause if the query doesn't already have one."""
     if re.search(r"\blimit\b", sql, re.IGNORECASE):
@@ -162,13 +167,38 @@ if "messages" not in st.session_state:
         {"role": "assistant", "content": "Hi! Ask me about tables, columns, or ask me to generate SQL for this dataset."}
     ]
 
-for msg in st.session_state.messages:
+# Chat history
+if "messages" not in st.session_state:
+    st.session_state.messages = [
+        {"role": "assistant", "content": "Hi! Ask me about tables, columns, or ask me to generate SQL for this dataset.", "sql": None, "df": None}
+    ]
+
+
+def render_message(idx: int, msg: dict):
     with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+        display_text = strip_sql_block(msg["content"]) if msg.get("sql") else msg["content"]
+        if display_text:
+            st.markdown(display_text)
+
         if msg.get("sql"):
             st.code(msg["sql"], language="sql")
+
             if msg.get("df") is not None:
+                st.success(f"Returned {len(msg['df'])} rows (limited to {MAX_ROWS})")
                 st.dataframe(msg["df"], use_container_width=True)
+            else:
+                if st.button("▶ Run in BigQuery", key=f"run_{idx}"):
+                    with st.spinner("Running query..."):
+                        try:
+                            df, _ = run_query_safely(msg["sql"])
+                            msg["df"] = df
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Query failed: {e}")
+
+
+for i, msg in enumerate(st.session_state.messages):
+    render_message(i, msg)
 
 
 # Suggested prompts
@@ -187,34 +217,18 @@ for col, s in zip(cols, suggestions):
 prompt = st.chat_input("Ask about your BigQuery tables...") or clicked
 
 if prompt:
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+    st.session_state.messages.append({"role": "user", "content": prompt, "sql": None, "df": None})
 
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            context_docs = retrieve(prompt, docs, vectorizer, doc_vectors)
-            full_prompt = build_prompt(prompt, context_docs)
-            answer = generate(full_prompt)
+    with st.spinner("Thinking..."):
+        context_docs = retrieve(prompt, docs, vectorizer, doc_vectors)
+        full_prompt = build_prompt(prompt, context_docs)
+        answer = generate(full_prompt)
 
-        sql = extract_sql(answer)
-        st.markdown(answer)
-
-        df = None
-        if sql:
-            st.code(sql, language="sql")
-            if st.button("▶ Run in BigQuery", key=f"run_{len(st.session_state.messages)}"):
-                with st.spinner("Running query..."):
-                    try:
-                        df, executed_sql = run_query_safely(sql)
-                        st.success(f"Returned {len(df)} rows (limited to {MAX_ROWS})")
-                        st.dataframe(df, use_container_width=True)
-                    except Exception as e:
-                        st.error(f"Query failed: {e}")
-
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": answer,
-            "sql": sql,
-            "df": df,
-        })
+    sql = extract_sql(answer)
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": answer,
+        "sql": sql,
+        "df": None,
+    })
+    st.rerun()
