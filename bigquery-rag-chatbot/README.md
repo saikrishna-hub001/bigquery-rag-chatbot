@@ -52,7 +52,7 @@ bigquery-rag-chatbot/
 
 ---
 
-## Setup — Part 1: Get a Gemini API key (2 minutes)
+## Setup — Part 1: Get a Gemini API key 
 
 1. Go to https://aistudio.google.com/app/apikey
 2. Click **Create API Key**
@@ -60,7 +60,7 @@ bigquery-rag-chatbot/
 
 ---
 
-## Setup — Part 2: Create a read-only GCP service account (5 minutes)
+## Setup — Part 2: Create a read-only GCP service account 
 
 This lets the app run BigQuery queries on your behalf, safely.
 
@@ -101,7 +101,7 @@ git push -u origin main
 
 ---
 
-## Setup — Part 4: Deploy on Streamlit Community Cloud (3 minutes)
+## Setup — Part 4: Deploy on Streamlit Community Cloud
 
 1. Go to https://share.streamlit.io
 2. Sign in with GitHub
@@ -137,50 +137,6 @@ In about 1-2 minutes you'll get a live URL like:
 https://your-app-name.streamlit.app
 ```
 
----
-
-## Updating the metadata (optional)
-
-The app ships with pre-built metadata for `thelook_ecommerce` in
-`data/metadata.json`. To regenerate it from live BigQuery `INFORMATION_SCHEMA`:
-
-```bash
-pip install -r requirements.txt
-gcloud auth application-default login
-python scripts/extract_metadata.py YOUR_GCP_PROJECT_ID
-```
-
-This is optional — the included metadata is already accurate for this dataset.
-
----
-
-## Safety guardrails built in
-
-- Service account has **read-only** roles (`bigquery.dataViewer`, `bigquery.jobUser`) — cannot write, delete, or modify anything
-- Every executed query gets `LIMIT 100` automatically if missing
-- `maximum_bytes_billed` capped at 200MB per query — well within free tier
-- RAG context restricted to `thelook_ecommerce` schema only — Gemini can't reference tables outside this dataset
-
----
-
-## Resume bullet
-
-> Built and deployed an AI-powered BigQuery data catalog assistant using RAG (Gemini embeddings) and Gemini 2.0 Flash, enabling natural language table discovery, schema explanation, and safe SQL generation/execution; deployed as a public web app on Streamlit Cloud.
-
----
-
-## Interview talking points
-
-**"Walk me through the RAG pipeline"**
-> Table and column metadata is embedded once using Gemini's text-embedding-004 model and cached. When a user asks a question, their query is embedded with the same model, and I compute cosine similarity against the table embeddings to retrieve the top 3 most relevant tables. Those get injected into the prompt as context before calling Gemini 2.0 Flash for the final answer.
-
-**"Why not let the LLM just run any SQL it generates?"**
-> Two reasons: cost control and safety. I enforce a LIMIT clause and a maximum_bytes_billed cap on every query so even a poorly-generated query can't run up costs. The service account is also scoped to read-only roles, so there's no risk of data modification regardless of what SQL gets generated.
-
-**"How would this scale to a real enterprise BigQuery with thousands of tables?"**
-> The current approach embeds full table metadata, which works for tens of tables. At enterprise scale I'd move to a vector database (e.g. Vertex AI Vector Search or pgvector) for the embeddings, embed at the column level rather than table level for finer retrieval, and add a nightly job to detect schema drift and re-embed only changed tables.
-
----
 
 ## Tech stack
 
