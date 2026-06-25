@@ -60,13 +60,20 @@ def get_groq_client():
 
 def generate(prompt: str) -> str:
     client = get_groq_client()
-    resp = client.chat.completions.create(
-        model=GEN_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.2,
-        max_tokens=2048,
-    )
-    return resp.choices[0].message.content
+    for attempt in range(3):  # retry up to 3 times
+        try:
+            resp = client.chat.completions.create(
+                model=GEN_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+                max_tokens=1024,  # lower = faster, less likely to timeout
+            )
+            return resp.choices[0].message.content
+        except Exception as e:
+            if attempt == 2:
+                raise e
+            import time
+            time.sleep(2)
 
 # ── BigQuery ──────────────────────────────────────────────────────────────────
 @st.cache_resource
@@ -136,23 +143,19 @@ SCHEMA:
 QUESTION: {query}"""
 
 def build_csv_prompt(query, df, filename):
-    lines = []
-    for col in list(df.columns)[:20]:
+    # Keep schema very short to avoid Groq timeouts
+    cols = []
+    for col in list(df.columns)[:15]:
         try:
-            dtype  = str(df[col].dtype)
-            sample = str(df[col].dropna().iloc[0]) if df[col].dropna().shape[0] > 0 else "N/A"
-            lines.append(f"- {col} ({dtype}): e.g. {sample}")
+            sample = str(df[col].dropna().iloc[0]) if len(df[col].dropna()) > 0 else "N/A"
+            cols.append(f"{col} ({df[col].dtype}): e.g. {sample[:30]}")
         except Exception:
-            lines.append(f"- {col}")
-    schema = "\n".join(lines) or "No columns"
-    return f"""You are a helpful data analyst. The user uploaded "{filename}" with {len(df)} rows and {len(df.columns)} columns.
-
-Columns:
-{schema}
-
-Answer clearly in plain English. If the question needs a calculation, give your best explanation based on the column types shown above.
-
-Question: {query}"""
+            cols.append(col)
+    schema = "\n".join(cols)
+    return f"""Dataset: "{filename}", {len(df)} rows, {len(df.columns)} columns.
+Columns: {schema}
+Question: {query}
+Answer briefly and helpfully in plain English."""
 
 # ── Smart dashboard charts ────────────────────────────────────────────────────
 def smart_chart(df_chart: pd.DataFrame, title: str, chart_hint: str = "auto"):
