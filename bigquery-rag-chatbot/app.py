@@ -54,7 +54,7 @@ html,body,[class*="css"]{font-family:'Inter',sans-serif;}
 BQ_DATASET = "bigquery-public-data.thelook_ecommerce"
 GEN_MODEL  = "llama-3.3-70b-versatile"
 MAX_ROWS   = 100
-MAX_BYTES  = 200 * 1024 * 1024
+MAX_BYTES  = 1024 * 1024 * 1024   # 1GB — stays within BigQuery free tier
 
 # ── Groq ──────────────────────────────────────────────────────────────────────
 @st.cache_resource
@@ -161,17 +161,20 @@ SCHEMA:
 QUESTION: {query}"""
 
 def build_csv_prompt(query, schema_text, df: pd.DataFrame):
-    cols = list(df.columns)
-    return f"""You are a data analyst. The user uploaded a CSV file.
-The pandas DataFrame is called `df`. Columns: {cols}
+    cols  = list(df.columns)
+    dtype = {col: str(df[col].dtype) for col in cols}
+    return f"""You are a helpful data analyst assistant. The user uploaded a CSV as a pandas DataFrame called `df`.
 
-Schema:
-{schema_text}
+DataFrame info:
+- Shape: {df.shape[0]} rows x {df.shape[1]} columns
+- Columns and types: {dtype}
+- Schema: {schema_text}
 
 Rules:
-- For analysis/query questions: write a ```python code block that stores the answer in a variable called `result` (DataFrame or scalar). Use only pandas and numpy — both are pre-imported as `pd` and `np`.
-- For schema/description questions: answer in plain text, NO code block.
-- Keep answers concise.
+1. For data analysis, statistics, filtering, aggregation questions → write a ```python code block. Store the final answer in a variable called `result` (DataFrame or scalar). Only use `pd` and `np` (pre-imported). Do NOT import anything.
+2. For questions about column meanings or descriptions → answer in plain text ONLY, no code block.
+3. Always write a brief explanation before or after any code block.
+4. Be concise.
 
 QUESTION: {query}"""
 
@@ -311,11 +314,17 @@ tab_chat, tab_dashboard = st.tabs(["💬 Chat", "📊 Dashboard"])
 with tab_chat:
     def render_message(idx, msg):
         with st.chat_message(msg["role"]):
+            # Always show the text part — strip code blocks but always display remaining text
             code     = msg.get("sql") or msg.get("python")
             lang     = "sql" if msg.get("sql") else "python"
             disp_txt = strip_code_blocks(msg["content"]) if code else msg["content"]
-            if disp_txt:
+
+            # Always show text (even if empty after stripping — avoids blank responses)
+            if disp_txt and disp_txt.strip():
                 st.markdown(disp_txt)
+            elif not code:
+                # Fallback: show raw content if stripping removed everything
+                st.markdown(msg["content"])
             if code:
                 st.code(code, language=lang)
                 if msg.get("df") is not None:
@@ -399,35 +408,38 @@ with tab_dashboard:
             render_dashboard(st.session_state.csv_df, st.session_state.csv_name)
 
     else:
-        st.markdown('<div class="tab-header">📊 thelook_ecommerce Dashboard</div>', unsafe_allow_html=True)
-        st.markdown("Click a section below to load live data from BigQuery.")
+        st.markdown('<div class="tab-header">📊 thelook_ecommerce Live Dashboard</div>', unsafe_allow_html=True)
+        st.markdown("Click any card to load live data directly from BigQuery.")
 
         dash_col1, dash_col2 = st.columns(2)
 
         with dash_col1:
-            if st.button("📦 Load Order Status Distribution", use_container_width=True):
+            if st.button("📦 Order Status Breakdown", use_container_width=True):
                 with st.spinner("Querying BigQuery..."):
                     try:
                         df, _ = run_bq_query(f"""
-                            SELECT status, COUNT(*) as count
+                            SELECT status, COUNT(*) as total_orders
                             FROM `{BQ_DATASET}.orders`
-                            GROUP BY status ORDER BY count DESC
+                            GROUP BY status
+                            ORDER BY total_orders DESC
                         """)
-                        st.markdown("**Order Status Distribution**")
-                        st.bar_chart(df.set_index("status")["count"])
+                        st.markdown("**Order Status Breakdown**")
+                        st.bar_chart(df.set_index("status")["total_orders"])
                         st.dataframe(df, use_container_width=True)
                     except Exception as e:
                         st.error(f"Query failed: {e}")
 
-            if st.button("🛍️ Load Top 10 Products by Revenue", use_container_width=True):
+            if st.button("🛍️ Top 10 Products by Revenue", use_container_width=True):
                 with st.spinner("Querying BigQuery..."):
                     try:
                         df, _ = run_bq_query(f"""
-                            SELECT p.name, SUM(oi.sale_price) as revenue
+                            SELECT p.name, ROUND(SUM(oi.sale_price),2) as revenue
                             FROM `{BQ_DATASET}.order_items` oi
                             JOIN `{BQ_DATASET}.products` p ON oi.product_id = p.id
-                            WHERE oi.status = 'Complete'
-                            GROUP BY p.name ORDER BY revenue DESC LIMIT 10
+                            WHERE oi.status NOT IN ('Cancelled','Returned')
+                            GROUP BY p.name
+                            ORDER BY revenue DESC
+                            LIMIT 10
                         """)
                         st.markdown("**Top 10 Products by Revenue**")
                         st.bar_chart(df.set_index("name")["revenue"])
@@ -435,16 +447,35 @@ with tab_dashboard:
                     except Exception as e:
                         st.error(f"Query failed: {e}")
 
-        with dash_col2:
-            if st.button("📈 Load Monthly Revenue Trend", use_container_width=True):
+            if st.button("🏷️ Revenue by Product Category", use_container_width=True):
                 with st.spinner("Querying BigQuery..."):
                     try:
                         df, _ = run_bq_query(f"""
-                            SELECT FORMAT_DATE('%Y-%m', DATE(created_at)) as month,
-                                   SUM(sale_price) as revenue
+                            SELECT p.category, ROUND(SUM(oi.sale_price),2) as revenue
+                            FROM `{BQ_DATASET}.order_items` oi
+                            JOIN `{BQ_DATASET}.products` p ON oi.product_id = p.id
+                            WHERE oi.status NOT IN ('Cancelled','Returned')
+                            GROUP BY p.category
+                            ORDER BY revenue DESC
+                        """)
+                        st.markdown("**Revenue by Product Category**")
+                        st.bar_chart(df.set_index("category")["revenue"])
+                        st.dataframe(df, use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Query failed: {e}")
+
+        with dash_col2:
+            if st.button("📈 Monthly Revenue Trend", use_container_width=True):
+                with st.spinner("Querying BigQuery..."):
+                    try:
+                        df, _ = run_bq_query(f"""
+                            SELECT
+                                FORMAT_TIMESTAMP('%Y-%m', created_at) as month,
+                                ROUND(SUM(sale_price),2) as revenue
                             FROM `{BQ_DATASET}.order_items`
-                            WHERE status = 'Complete'
-                            GROUP BY month ORDER BY month
+                            WHERE status NOT IN ('Cancelled','Returned')
+                            GROUP BY month
+                            ORDER BY month
                         """)
                         st.markdown("**Monthly Revenue Trend**")
                         st.line_chart(df.set_index("month")["revenue"])
@@ -452,31 +483,52 @@ with tab_dashboard:
                     except Exception as e:
                         st.error(f"Query failed: {e}")
 
-            if st.button("👥 Load Customers by Country", use_container_width=True):
+            if st.button("👥 Customers by Country", use_container_width=True):
                 with st.spinner("Querying BigQuery..."):
                     try:
                         df, _ = run_bq_query(f"""
                             SELECT country, COUNT(*) as customers
                             FROM `{BQ_DATASET}.users`
-                            GROUP BY country ORDER BY customers DESC LIMIT 15
+                            GROUP BY country
+                            ORDER BY customers DESC
+                            LIMIT 15
                         """)
-                        st.markdown("**Customers by Country**")
+                        st.markdown("**Top 15 Countries by Customers**")
                         st.bar_chart(df.set_index("country")["customers"])
                         st.dataframe(df, use_container_width=True)
                     except Exception as e:
                         st.error(f"Query failed: {e}")
 
+            if st.button("👫 Revenue by Gender", use_container_width=True):
+                with st.spinner("Querying BigQuery..."):
+                    try:
+                        df, _ = run_bq_query(f"""
+                            SELECT o.gender, ROUND(SUM(oi.sale_price),2) as revenue
+                            FROM `{BQ_DATASET}.order_items` oi
+                            JOIN `{BQ_DATASET}.orders` o ON oi.order_id = o.order_id
+                            WHERE oi.status NOT IN ('Cancelled','Returned')
+                            GROUP BY o.gender
+                            ORDER BY revenue DESC
+                        """)
+                        st.markdown("**Revenue by Gender**")
+                        st.bar_chart(df.set_index("gender")["revenue"])
+                        st.dataframe(df, use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Query failed: {e}")
+
         st.divider()
-        if st.button("🚀 Load Full Overview (all 4 charts)", use_container_width=True):
-            queries = {
-                "Order Status": (f"SELECT status, COUNT(*) as count FROM `{BQ_DATASET}.orders` GROUP BY status ORDER BY count DESC", "status", "count", "bar"),
-                "Monthly Revenue": (f"SELECT FORMAT_DATE('%Y-%m', DATE(created_at)) as month, SUM(sale_price) as revenue FROM `{BQ_DATASET}.order_items` WHERE status='Complete' GROUP BY month ORDER BY month", "month", "revenue", "line"),
-                "Top Products": (f"SELECT p.name, SUM(oi.sale_price) as revenue FROM `{BQ_DATASET}.order_items` oi JOIN `{BQ_DATASET}.products` p ON oi.product_id = p.id WHERE oi.status='Complete' GROUP BY p.name ORDER BY revenue DESC LIMIT 10", "name", "revenue", "bar"),
-                "Customers by Country": (f"SELECT country, COUNT(*) as customers FROM `{BQ_DATASET}.users` GROUP BY country ORDER BY customers DESC LIMIT 15", "country", "customers", "bar"),
-            }
+        if st.button("🚀 Load Full Overview — all 6 charts", use_container_width=True):
+            queries = [
+                ("📦 Order Status", f"SELECT status, COUNT(*) as count FROM `{BQ_DATASET}.orders` GROUP BY status ORDER BY count DESC", "status", "count", "bar"),
+                ("📈 Monthly Revenue", f"SELECT FORMAT_TIMESTAMP('%Y-%m', created_at) as month, ROUND(SUM(sale_price),2) as revenue FROM `{BQ_DATASET}.order_items` WHERE status NOT IN ('Cancelled','Returned') GROUP BY month ORDER BY month", "month", "revenue", "line"),
+                ("🛍️ Top Products", f"SELECT p.name, ROUND(SUM(oi.sale_price),2) as revenue FROM `{BQ_DATASET}.order_items` oi JOIN `{BQ_DATASET}.products` p ON oi.product_id = p.id WHERE oi.status NOT IN ('Cancelled','Returned') GROUP BY p.name ORDER BY revenue DESC LIMIT 10", "name", "revenue", "bar"),
+                ("👥 By Country", f"SELECT country, COUNT(*) as customers FROM `{BQ_DATASET}.users` GROUP BY country ORDER BY customers DESC LIMIT 15", "country", "customers", "bar"),
+                ("🏷️ By Category", f"SELECT p.category, ROUND(SUM(oi.sale_price),2) as revenue FROM `{BQ_DATASET}.order_items` oi JOIN `{BQ_DATASET}.products` p ON oi.product_id = p.id WHERE oi.status NOT IN ('Cancelled','Returned') GROUP BY p.category ORDER BY revenue DESC", "category", "revenue", "bar"),
+                ("👫 By Gender", f"SELECT o.gender, ROUND(SUM(oi.sale_price),2) as revenue FROM `{BQ_DATASET}.order_items` oi JOIN `{BQ_DATASET}.orders` o ON oi.order_id = o.order_id WHERE oi.status NOT IN ('Cancelled','Returned') GROUP BY o.gender ORDER BY revenue DESC", "gender", "revenue", "bar"),
+            ]
             c1, c2 = st.columns(2)
-            containers = [c1, c2, c1, c2]
-            for (title, (sql, idx_col, val_col, chart_type)), container in zip(queries.items(), containers):
+            containers = [c1, c2] * 3
+            for (title, sql, idx_col, val_col, chart_type), container in zip(queries, containers):
                 with container:
                     with st.spinner(f"Loading {title}..."):
                         try:
