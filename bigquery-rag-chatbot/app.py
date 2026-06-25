@@ -422,6 +422,20 @@ with tab_chat:
                     stripped = strip_code_blocks(answer).strip()
                     st.markdown(stripped or "Here's the generated code:")
                     st.code(code, language=lang)
+                    # Show run button immediately
+                    btn_label = "▶ Run in BigQuery" if sql else "▶ Run on my data"
+                    if st.button(btn_label, key="run_latest"):
+                        with st.spinner("⚡ Running..."):
+                            try:
+                                if sql:
+                                    res, _ = run_bq_query(sql)
+                                else:
+                                    res = run_pandas_code(py, st.session_state.csv_df)
+                                # Save result and rerun to show in history
+                                st.session_state.messages[-1]["df"] = res
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Run failed: {e}")
                 else:
                     st.markdown(answer)
 
