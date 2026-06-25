@@ -96,7 +96,7 @@ def generate(prompt: str) -> str:
         model=GEN_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2,
-        max_tokens=1024,
+        max_tokens=2048,
     )
     return resp.choices[0].message.content
 
@@ -188,23 +188,40 @@ SCHEMA:
 
 QUESTION: {query}"""
 
-def build_csv_prompt(query, schema_text, df: pd.DataFrame):
-    cols  = list(df.columns)
-    dtype = {col: str(df[col].dtype) for col in cols}
-    return f"""You are a helpful data analyst assistant. The user uploaded a CSV as a pandas DataFrame called `df`.
+def build_csv_prompt(query, df: pd.DataFrame, filename: str) -> str:
+    # Build a compact but complete schema summary directly from the dataframe
+    num_cols = df.select_dtypes(include=np.number).columns.tolist()
+    cat_cols = df.select_dtypes(include=["object","category"]).columns.tolist()
 
-DataFrame info:
-- Shape: {df.shape[0]} rows x {df.shape[1]} columns
-- Columns and types: {dtype}
-- Schema: {schema_text}
+    schema_lines = []
+    for col in df.columns:
+        dtype   = str(df[col].dtype)
+        n_null  = int(df[col].isnull().sum())
+        n_uniq  = int(df[col].nunique())
+        if df[col].dtype in [np.float64, np.int64, np.float32, np.int32]:
+            mn, mx, avg = df[col].min(), df[col].max(), round(df[col].mean(), 2)
+            schema_lines.append(f"  {col} ({dtype}): min={mn}, max={mx}, mean={avg}, nulls={n_null}")
+        else:
+            samples = df[col].dropna().astype(str).unique()[:3].tolist()
+            schema_lines.append(f"  {col} ({dtype}): {n_uniq} unique, e.g. {samples}, nulls={n_null}")
 
-Rules:
-1. For data analysis, statistics, filtering, aggregation questions → write a ```python code block. Store the final answer in a variable called `result` (DataFrame or scalar). Only use `pd` and `np` (pre-imported). Do NOT import anything.
-2. For questions about column meanings or descriptions → answer in plain text ONLY, no code block.
-3. Always write a brief explanation before or after any code block.
-4. Be concise.
+    schema = "\n".join(schema_lines)
 
-QUESTION: {query}"""
+    return f"""You are a data analyst. The user uploaded a CSV file called "{filename}".
+
+Dataset: {len(df)} rows × {len(df.columns)} columns
+Numeric columns: {num_cols}
+Text columns: {cat_cols}
+
+Column details:
+{schema}
+
+Answer the user's question directly and helpfully. 
+- For calculations/analysis: first give a plain English answer, then optionally show a ```python code block using pandas (df is the DataFrame, pd and np are imported, store result in variable called `result`).
+- For descriptions/explanations: answer in plain text only.
+- Keep your answer concise and clear.
+
+Question: {query}"""
 
 # ── Dashboard helpers ─────────────────────────────────────────────────────────
 def render_dashboard(df: pd.DataFrame, title: str = "Dataset Dashboard"):
@@ -258,7 +275,7 @@ def render_dashboard(df: pd.DataFrame, title: str = "Dataset Dashboard"):
     if len(num_cols) >= 2:
         st.markdown("**🔗 Numeric correlation**")
         corr = df[num_cols].corr().round(2)
-        st.dataframe(corr.style.background_gradient(cmap="RdYlGn", axis=None), use_container_width=True)
+        st.dataframe(corr, use_container_width=True)
 
     # ── Data preview ──
     st.markdown("**🔍 Data preview**")
@@ -427,10 +444,12 @@ with tab_chat:
                     sql    = extract_sql(answer)
                     st.session_state.messages.append({"role":"assistant","content":answer,"sql":sql,"python":None,"df":None})
                 else:
-                    df = st.session_state.csv_df
-                    _, csv_vec, csv_mat, schema_text = build_csv_index(df, st.session_state.csv_name)
-                    answer = generate(build_csv_prompt(prompt, schema_text, df))
-                    py     = extract_python(answer)
+                    df_csv = st.session_state.csv_df
+                    try:
+                        answer = generate(build_csv_prompt(prompt, df_csv, st.session_state.csv_name))
+                    except Exception as e:
+                        answer = f"Sorry, I encountered an error: {e}. Please try rephrasing your question."
+                    py = extract_python(answer)
                     st.session_state.messages.append({"role":"assistant","content":answer,"sql":None,"python":py,"df":None})
             st.rerun()
 
