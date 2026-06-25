@@ -59,21 +59,22 @@ def get_groq_client():
     return Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 def generate(prompt: str) -> str:
-    client = get_groq_client()
-    for attempt in range(3):  # retry up to 3 times
+    # Create fresh client every time — cached client can go stale
+    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+    for attempt in range(3):
         try:
             resp = client.chat.completions.create(
-                model=GEN_MODEL,
+                model="llama-3.1-8b-instant",  # smaller/faster model, less likely to timeout
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.2,
-                max_tokens=1024,  # lower = faster, less likely to timeout
+                max_tokens=512,
             )
             return resp.choices[0].message.content
         except Exception as e:
             if attempt == 2:
-                raise e
+                return f"⚠️ Groq API error after 3 attempts: {str(e)}"
             import time
-            time.sleep(2)
+            time.sleep(3)
 
 # ── BigQuery ──────────────────────────────────────────────────────────────────
 @st.cache_resource
