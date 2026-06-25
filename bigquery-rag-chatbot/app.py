@@ -47,6 +47,34 @@ html,body,[class*="css"]{font-family:'Inter',sans-serif;}
 .section-label{font-size:0.68rem;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:#888;margin:0.8rem 0 0.3rem;}
 .tab-header{font-size:1.1rem;font-weight:700;color:#667eea;margin-bottom:1rem;}
 .chart-card{background:#f8f9ff;border:1px solid #e0e0ff;border-radius:12px;padding:1rem;margin-bottom:1rem;}
+/* ── Big bold tabs ── */
+[data-testid="stTabs"] [data-baseweb="tab-list"] {
+    gap: 8px;
+    background: transparent;
+    border-bottom: 2px solid #e0e0ff;
+    padding-bottom: 4px;
+}
+[data-testid="stTabs"] [data-baseweb="tab"] {
+    background: linear-gradient(135deg,#667eea22,#764ba222) !important;
+    border-radius: 12px 12px 0 0 !important;
+    border: 1px solid #667eea44 !important;
+    border-bottom: none !important;
+    padding: 12px 28px !important;
+    font-size: 1rem !important;
+    font-weight: 600 !important;
+    color: #667eea !important;
+    transition: all 0.2s !important;
+}
+[data-testid="stTabs"] [aria-selected="true"] {
+    background: linear-gradient(135deg,#667eea,#764ba2) !important;
+    color: white !important;
+    border-color: #667eea !important;
+    box-shadow: 0 4px 12px rgba(102,126,234,0.3) !important;
+}
+[data-testid="stTabs"] [data-baseweb="tab"]:hover {
+    background: linear-gradient(135deg,#667eea44,#764ba244) !important;
+    transform: translateY(-2px) !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -314,18 +342,13 @@ tab_chat, tab_dashboard = st.tabs(["💬 Chat", "📊 Dashboard"])
 with tab_chat:
     def render_message(idx, msg):
         with st.chat_message(msg["role"]):
-            # Always show the text part — strip code blocks but always display remaining text
-            code     = msg.get("sql") or msg.get("python")
-            lang     = "sql" if msg.get("sql") else "python"
-            disp_txt = strip_code_blocks(msg["content"]) if code else msg["content"]
+            code = msg.get("sql") or msg.get("python")
+            lang = "sql" if msg.get("sql") else "python"
 
-            # Always show text (even if empty after stripping — avoids blank responses)
-            if disp_txt and disp_txt.strip():
-                st.markdown(disp_txt)
-            elif not code:
-                # Fallback: show raw content if stripping removed everything
-                st.markdown(msg["content"])
+            # Always show text — strip code block for display but fall back to full content
             if code:
+                stripped = strip_code_blocks(msg["content"]).strip()
+                st.markdown(stripped if stripped else "Here's the code:")
                 st.code(code, language=lang)
                 if msg.get("df") is not None:
                     result = msg["df"]
@@ -349,25 +372,39 @@ with tab_chat:
                             except Exception as e:
                                 st.error(f"Failed: {e}")
                     st.markdown('</div>', unsafe_allow_html=True)
+            else:
+                # Pure text answer (schema questions, descriptions, etc.)
+                st.markdown(msg["content"])
 
     for i, msg in enumerate(st.session_state.messages):
         render_message(i, msg)
 
-    # Suggestions
+    # Suggestions — dynamic based on mode and uploaded columns
     st.markdown('<div class="section-label" style="margin-top:1rem;">✨ Try these</div>', unsafe_allow_html=True)
     if st.session_state.mode == "bigquery":
-        suggestions = [("📋 List tables","List all tables"), ("📊 Revenue by month","Generate SQL for total revenue by month"),
-                       ("👥 Top customers","Top 10 customers by spend SQL"), ("🛍️ Best products","Best selling products SQL"),
-                       ("🔎 Orders columns","What columns are in the orders table?")]
+        suggestions = [
+            ("📋 List tables",      "List all tables and what they contain"),
+            ("📊 Revenue by month", "Generate SQL for total revenue by month"),
+            ("👥 Top customers",    "Top 10 customers by total spend SQL"),
+            ("🛍️ Best products",    "Best selling products by revenue SQL"),
+            ("🔎 Orders columns",   "What columns are in the orders table?"),
+        ]
     elif st.session_state.csv_df is not None:
-        first_col = st.session_state.csv_df.columns[0]
-        suggestions = [("📋 Describe data","Describe this dataset and its columns"),
-                       ("📊 Summary stats","Show summary statistics for all numeric columns"),
-                       ("🔎 Missing values","Which columns have missing values?"),
-                       ("📈 Top 10 rows",f"Show top 10 rows sorted by {first_col}"),
-                       ("💡 Key insights","What are the top 3 insights from this data?")]
+        df_cols   = st.session_state.csv_df.columns.tolist()
+        num_cols  = st.session_state.csv_df.select_dtypes(include=np.number).columns.tolist()
+        cat_cols  = st.session_state.csv_df.select_dtypes(include=["object","category"]).columns.tolist()
+        first_col = df_cols[0]
+        # Build dynamic suggestions based on actual columns
+        suggestions = [("📋 Describe data", "Describe this dataset and explain each column")]
+        if num_cols:
+            suggestions.append(("📊 Summary stats", f"Show summary statistics for {', '.join(num_cols[:3])}"))
+            suggestions.append(("📈 Distribution",  f"Show the distribution of {num_cols[0]}"))
+        if cat_cols:
+            suggestions.append(("🏷️ Top categories", f"What are the top 10 values in the {cat_cols[0]} column?"))
+        suggestions.append(("💡 Key insights", "What are the top 3 interesting insights from this data?"))
+        suggestions = suggestions[:5]   # max 5
     else:
-        suggestions = [("📤 Upload a CSV","Please upload a CSV file in the sidebar to get started")]
+        suggestions = [("📤 Upload a CSV", "Please upload a CSV file in the sidebar to get started")]
 
     clicked = None
     cols    = st.columns(len(suggestions))
