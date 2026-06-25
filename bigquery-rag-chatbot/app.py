@@ -189,37 +189,26 @@ SCHEMA:
 QUESTION: {query}"""
 
 def build_csv_prompt(query, df: pd.DataFrame, filename: str) -> str:
-    # Build a compact but complete schema summary directly from the dataframe
-    num_cols = df.select_dtypes(include=np.number).columns.tolist()
-    cat_cols = df.select_dtypes(include=["object","category"]).columns.tolist()
+    # Bulletproof schema builder — wraps everything in try/except
+    lines = []
+    for col in list(df.columns)[:20]:  # cap at 20 columns to avoid token overflow
+        try:
+            dtype  = str(df[col].dtype)
+            sample = df[col].dropna().astype(str).iloc[0] if df[col].dropna().shape[0] > 0 else "N/A"
+            lines.append(f"- {col} | type: {dtype} | example: {sample}")
+        except Exception:
+            lines.append(f"- {col}")
+    schema = "\n".join(lines) if lines else "No columns found"
 
-    schema_lines = []
-    for col in df.columns:
-        dtype   = str(df[col].dtype)
-        n_null  = int(df[col].isnull().sum())
-        n_uniq  = int(df[col].nunique())
-        if df[col].dtype in [np.float64, np.int64, np.float32, np.int32]:
-            mn, mx, avg = df[col].min(), df[col].max(), round(df[col].mean(), 2)
-            schema_lines.append(f"  {col} ({dtype}): min={mn}, max={mx}, mean={avg}, nulls={n_null}")
-        else:
-            samples = df[col].dropna().astype(str).unique()[:3].tolist()
-            schema_lines.append(f"  {col} ({dtype}): {n_uniq} unique, e.g. {samples}, nulls={n_null}")
+    return f"""You are a helpful data analyst assistant. The user uploaded a CSV file called "{filename}".
 
-    schema = "\n".join(schema_lines)
+The dataset has {len(df)} rows and {len(df.columns)} columns.
 
-    return f"""You are a data analyst. The user uploaded a CSV file called "{filename}".
-
-Dataset: {len(df)} rows × {len(df.columns)} columns
-Numeric columns: {num_cols}
-Text columns: {cat_cols}
-
-Column details:
+Columns:
 {schema}
 
-Answer the user's question directly and helpfully. 
-- For calculations/analysis: first give a plain English answer, then optionally show a ```python code block using pandas (df is the DataFrame, pd and np are imported, store result in variable called `result`).
-- For descriptions/explanations: answer in plain text only.
-- Keep your answer concise and clear.
+Please answer the following question in plain English. Be helpful and direct.
+If you need to refer to specific numbers, use the column details above.
 
 Question: {query}"""
 
@@ -446,9 +435,10 @@ with tab_chat:
                 else:
                     df_csv = st.session_state.csv_df
                     try:
-                        answer = generate(build_csv_prompt(prompt, df_csv, st.session_state.csv_name))
+                        csv_prompt = build_csv_prompt(prompt, df_csv, st.session_state.csv_name)
+                        answer = generate(csv_prompt)
                     except Exception as e:
-                        answer = f"Sorry, I encountered an error: {e}. Please try rephrasing your question."
+                        answer = f"⚠️ Error generating answer: {str(e)}\n\nPlease try a simpler question or rephrase."
                     py = extract_python(answer)
                     st.session_state.messages.append({"role":"assistant","content":answer,"sql":None,"python":py,"df":None})
             st.rerun()
