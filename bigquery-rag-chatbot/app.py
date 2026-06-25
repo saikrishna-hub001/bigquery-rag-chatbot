@@ -1,12 +1,16 @@
 """
-BigQuery RAG Data Catalog Assistant
-Colorful, LinkedIn-ready UI with Groq (Llama 3.3) + TF-IDF RAG + BigQuery live execution.
+BigQuery AI Data Catalog Assistant
+- Default mode: thelook_ecommerce BigQuery public dataset
+- Custom mode: upload your own CSV and ask questions about it
+Powered by Groq (Llama 3.3 70B) + TF-IDF RAG + BigQuery / pandas execution
 """
 
 import json
 import os
 import re
+import io
 import numpy as np
+import pandas as pd
 import streamlit as st
 from groq import Groq
 from google.cloud import bigquery
@@ -25,32 +29,28 @@ st.set_page_config(
 # ── Custom CSS ────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-/* ── Import font ── */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
 html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 
-/* ── Gradient hero header ── */
 .hero {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 40%, #f093fb 100%);
-    border-radius: 16px;
-    padding: 2rem 2.5rem;
-    margin-bottom: 1.5rem;
-    color: white;
-    box-shadow: 0 8px 32px rgba(102,126,234,0.35);
+    border-radius: 16px; padding: 2rem 2.5rem; margin-bottom: 1.5rem;
+    color: white; box-shadow: 0 8px 32px rgba(102,126,234,0.35);
 }
 .hero h1 { font-size: 2rem; font-weight: 700; margin: 0 0 0.3rem; color: white; }
 .hero p  { font-size: 1rem; margin: 0; opacity: 0.9; color: white; }
 
-/* ── Stat cards ── */
+.mode-badge {
+    display: inline-block; border-radius: 20px; padding: 4px 14px;
+    font-size: 0.78rem; font-weight: 600; margin-bottom: 1rem;
+}
+.mode-bq     { background: linear-gradient(135deg,#667eea,#764ba2); color: white; }
+.mode-custom { background: linear-gradient(135deg,#11998e,#38ef7d); color: white; }
+
 .stat-row { display: flex; gap: 12px; margin-bottom: 1.2rem; flex-wrap: wrap; }
 .stat-card {
-    flex: 1; min-width: 90px;
-    border-radius: 12px;
-    padding: 14px 16px;
-    color: white;
-    font-weight: 600;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    flex: 1; min-width: 90px; border-radius: 12px; padding: 14px 16px;
+    color: white; font-weight: 600; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
 }
 .stat-card .val { font-size: 1.6rem; line-height: 1; }
 .stat-card .lbl { font-size: 0.7rem; opacity: 0.85; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
@@ -58,28 +58,16 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 .card-pink   { background: linear-gradient(135deg,#f093fb,#f5576c); }
 .card-teal   { background: linear-gradient(135deg,#4facfe,#00f2fe); }
 
-/* ── Table chips in sidebar ── */
 .chip {
-    display: inline-block;
-    background: linear-gradient(135deg,#667eea22,#764ba222);
-    color: #667eea;
-    border: 1px solid #667eea55;
-    border-radius: 20px;
-    padding: 3px 10px;
-    font-size: 0.75rem;
-    font-weight: 500;
-    margin: 3px 2px;
+    display: inline-block; background: #a78bfa11; color: #a78bfa;
+    border: 1px solid #a78bfa55; border-radius: 20px; padding: 3px 10px;
+    font-size: 0.75rem; font-weight: 500; margin: 3px 2px;
 }
 
-/* ── Suggestion buttons ── */
 .stButton > button {
     background: linear-gradient(135deg, #667eea, #764ba2) !important;
-    color: white !important;
-    border: none !important;
-    border-radius: 20px !important;
-    font-size: 0.8rem !important;
-    font-weight: 500 !important;
-    padding: 8px 16px !important;
+    color: white !important; border: none !important; border-radius: 20px !important;
+    font-size: 0.8rem !important; font-weight: 500 !important; padding: 8px 16px !important;
     transition: transform 0.15s, box-shadow 0.15s !important;
     box-shadow: 0 3px 10px rgba(102,126,234,0.3) !important;
 }
@@ -87,59 +75,39 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
     transform: translateY(-2px) !important;
     box-shadow: 0 6px 16px rgba(102,126,234,0.45) !important;
 }
-
-/* ── Run button ── */
 .run-btn > button {
     background: linear-gradient(135deg,#11998e,#38ef7d) !important;
-    color: white !important;
-    border-radius: 20px !important;
-    font-weight: 600 !important;
-    border: none !important;
+    color: white !important; border-radius: 20px !important;
+    font-weight: 600 !important; border: none !important;
     box-shadow: 0 3px 10px rgba(17,153,142,0.3) !important;
 }
-
-/* ── Chat bubbles ── */
-[data-testid="stChatMessage"] {
-    border-radius: 14px !important;
-    margin-bottom: 8px !important;
-}
-
-/* ── Success banner ── */
 .result-banner {
     background: linear-gradient(135deg,#11998e22,#38ef7d22);
-    border: 1px solid #11998e55;
-    border-radius: 10px;
-    padding: 8px 14px;
-    color: #11998e;
-    font-weight: 600;
-    font-size: 0.85rem;
-    margin-bottom: 8px;
+    border: 1px solid #11998e55; border-radius: 10px; padding: 8px 14px;
+    color: #11998e; font-weight: 600; font-size: 0.85rem; margin-bottom: 8px;
 }
-
-/* ── Sidebar ── */
+.upload-box {
+    background: linear-gradient(135deg,#667eea11,#764ba211);
+    border: 2px dashed #667eea55; border-radius: 12px; padding: 1rem;
+    text-align: center; margin-bottom: 1rem;
+}
 [data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%) !important;
+    background: linear-gradient(180deg,#1a1a2e,#16213e,#0f3460) !important;
 }
 [data-testid="stSidebar"] * { color: #e0e0e0 !important; }
-[data-testid="stSidebar"] .chip { color: #a78bfa !important; border-color: #a78bfa55 !important; background: #a78bfa11 !important; }
-
-/* ── Section labels ── */
+[data-testid="stSidebar"] .chip { color:#a78bfa !important; border-color:#a78bfa55 !important; background:#a78bfa11 !important; }
 .section-label {
-    font-size: 0.7rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: #888;
-    margin: 1rem 0 0.4rem;
+    font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.08em; color: #888; margin: 1rem 0 0.4rem;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # ── Config ────────────────────────────────────────────────────────────────────
-SOURCE_DATASET = "bigquery-public-data.thelook_ecommerce"
-GEN_MODEL      = "llama-3.3-70b-versatile"
-MAX_ROWS       = 100
-MAX_BYTES      = 200 * 1024 * 1024
+BQ_DATASET = "bigquery-public-data.thelook_ecommerce"
+GEN_MODEL  = "llama-3.3-70b-versatile"
+MAX_ROWS   = 100
+MAX_BYTES  = 200 * 1024 * 1024
 
 
 # ── Groq ──────────────────────────────────────────────────────────────────────
@@ -150,31 +118,30 @@ def get_groq_client():
 groq_client = get_groq_client()
 
 def generate(prompt: str) -> str:
-    response = groq_client.chat.completions.create(
+    resp = groq_client.chat.completions.create(
         model=GEN_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2,
     )
-    return response.choices[0].message.content
+    return resp.choices[0].message.content
 
 
 # ── BigQuery ──────────────────────────────────────────────────────────────────
 @st.cache_resource
 def get_bq_client():
-    creds_dict = dict(st.secrets["gcp_service_account"])
+    creds_dict  = dict(st.secrets["gcp_service_account"])
     credentials = service_account.Credentials.from_service_account_info(
         creds_dict, scopes=["https://www.googleapis.com/auth/cloud-platform"],
     )
     return bigquery.Client(credentials=credentials, project=creds_dict["project_id"])
 
 
-# ── RAG index ─────────────────────────────────────────────────────────────────
+# ── Default BQ index ──────────────────────────────────────────────────────────
 @st.cache_resource
-def load_index():
+def load_bq_index():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     with open(os.path.join(base_dir, "data", "metadata.json")) as f:
         metadata = json.load(f)
-
     docs = []
     for table in metadata["tables"]:
         col_text = ", ".join(
@@ -185,37 +152,53 @@ def load_index():
             "text": f"Table: {table['table_name']}\nDescription: {table['description']}\nColumns: {col_text}",
             "raw": table,
         })
+    vec = TfidfVectorizer(stop_words="english")
+    mat = vec.fit_transform([d["text"] for d in docs])
+    return docs, vec, mat, metadata
 
-    vectorizer  = TfidfVectorizer(stop_words="english")
-    doc_vectors = vectorizer.fit_transform([d["text"] for d in docs])
-    return docs, vectorizer, doc_vectors, metadata
+
+# ── CSV index builder ─────────────────────────────────────────────────────────
+def build_csv_index(df: pd.DataFrame, filename: str):
+    """Build a RAG index from an uploaded CSV dataframe."""
+    col_descriptions = []
+    for col in df.columns:
+        dtype    = str(df[col].dtype)
+        n_unique = df[col].nunique()
+        sample   = df[col].dropna().head(3).tolist()
+        col_descriptions.append(
+            f"{col} ({dtype}, {n_unique} unique values, e.g. {sample})"
+        )
+
+    doc_text = (
+        f"Table: {filename}\n"
+        f"Rows: {len(df)}\n"
+        f"Columns: {', '.join(col_descriptions)}"
+    )
+    docs = [{"table_name": filename, "text": doc_text, "raw": {"columns": [{"name": c} for c in df.columns]}}]
+    vec  = TfidfVectorizer(stop_words="english")
+    mat  = vec.fit_transform([doc_text])
+    return docs, vec, mat
 
 
-def retrieve(query, docs, vectorizer, doc_vectors, top_k=3):
-    sims    = cosine_similarity(vectorizer.transform([query]), doc_vectors).flatten()
+# ── Shared helpers ────────────────────────────────────────────────────────────
+def retrieve(query, docs, vec, mat, top_k=3):
+    sims    = cosine_similarity(vec.transform([query]), mat).flatten()
     top_idx = np.argsort(sims)[::-1][:top_k]
     return [docs[i] for i in top_idx]
-
-
-def build_prompt(query, context_docs):
-    context = "\n\n".join(d["text"] for d in context_docs)
-    return f"""You are a data catalog assistant for BigQuery dataset `{SOURCE_DATASET}`.
-Use ONLY the schema below. For SQL, use fully-qualified table names and wrap in ```sql blocks.
-Be concise.
-
-SCHEMA:
-{context}
-
-QUESTION: {query}"""
 
 
 def extract_sql(text):
     m = re.search(r"```sql\s*(.*?)```", text, re.DOTALL | re.IGNORECASE)
     return m.group(1).strip() if m else None
 
+def extract_python(text):
+    m = re.search(r"```python\s*(.*?)```", text, re.DOTALL | re.IGNORECASE)
+    return m.group(1).strip() if m else None
 
-def strip_sql_block(text):
-    return re.sub(r"```sql\s*.*?```", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+def strip_code_blocks(text):
+    text = re.sub(r"```sql\s*.*?```",    "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"```python\s*.*?```", "", text, flags=re.DOTALL | re.IGNORECASE)
+    return text.strip()
 
 
 def enforce_limit(sql):
@@ -224,144 +207,276 @@ def enforce_limit(sql):
     return sql.rstrip(";") + f"\nLIMIT {MAX_ROWS}"
 
 
-def run_query_safely(sql):
+def run_bq_query(sql):
     safe_sql   = enforce_limit(sql)
     job_config = bigquery.QueryJobConfig(maximum_bytes_billed=MAX_BYTES, use_query_cache=True)
     job        = get_bq_client().query(safe_sql, job_config=job_config)
     return job.result().to_dataframe(), safe_sql
 
 
-# ── Load index ────────────────────────────────────────────────────────────────
-docs, vectorizer, doc_vectors, metadata = load_index()
-total_cols = sum(len(t["columns"]) for t in metadata["tables"])
+def run_pandas_query(code: str, df: pd.DataFrame):
+    """Execute LLM-generated pandas code safely. df is available as 'df'."""
+    local_vars = {"df": df.copy(), "pd": pd}
+    exec(compile(code, "<string>", "exec"), {"__builtins__": {}}, local_vars)
+    result = local_vars.get("result", None)
+    if result is None:
+        for k, v in local_vars.items():
+            if isinstance(v, pd.DataFrame) and k != "df":
+                result = v
+                break
+    return result
+
+
+def build_bq_prompt(query, context_docs):
+    context = "\n\n".join(d["text"] for d in context_docs)
+    return f"""You are a BigQuery data catalog assistant for dataset `{BQ_DATASET}`.
+Use ONLY the schema below. For SQL, use fully-qualified table names and wrap in ```sql blocks. Be concise.
+
+SCHEMA:
+{context}
+
+QUESTION: {query}"""
+
+
+def build_csv_prompt(query, context_docs, df: pd.DataFrame):
+    context  = "\n\n".join(d["text"] for d in context_docs)
+    col_info = ", ".join(df.columns.tolist())
+    return f"""You are a data analyst assistant. The user has uploaded a CSV file.
+The dataframe is available as `df` in pandas. Columns: {col_info}
+
+Schema details:
+{context}
+
+If the user wants to query or analyze the data, write a pandas code block (```python) that:
+1. Performs the analysis on `df`
+2. Stores the final result in a variable called `result` (as a DataFrame or value)
+3. Never import anything or use file I/O
+
+For schema/column questions, just answer in plain text.
+Be concise.
+
+QUESTION: {query}"""
+
+
+# ── Session state init ────────────────────────────────────────────────────────
+if "messages" not in st.session_state:
+    st.session_state.messages = [{
+        "role": "assistant",
+        "content": "👋 Hi! I'm your AI data assistant. Ask me about the default BigQuery dataset, or upload your own CSV in the sidebar to explore your own data!",
+        "sql": None, "python": None, "df": None,
+    }]
+if "csv_df"   not in st.session_state: st.session_state.csv_df   = None
+if "csv_name" not in st.session_state: st.session_state.csv_name = None
+if "mode"     not in st.session_state: st.session_state.mode     = "bigquery"
+
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("""
-    <div style='text-align:center; padding: 1rem 0 0.5rem;'>
+    <div style='text-align:center; padding:1rem 0 0.5rem;'>
         <div style='font-size:2.5rem;'>🔍</div>
         <div style='font-size:1.1rem; font-weight:700; color:#a78bfa;'>BigQuery AI</div>
         <div style='font-size:0.75rem; opacity:0.6; margin-top:2px;'>Data Catalog Assistant</div>
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown(f"""
-    <div class="stat-row">
-        <div class="stat-card card-purple">
-            <div class="val">{len(docs)}</div>
-            <div class="lbl">Tables</div>
-        </div>
-        <div class="stat-card card-pink">
-            <div class="val">{total_cols}</div>
-            <div class="lbl">Columns</div>
-        </div>
-        <div class="stat-card card-teal">
-            <div class="val">RAG</div>
-            <div class="lbl">Method</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    # ── Mode toggle ──
+    st.markdown('<div class="section-label">📂 Data source</div>', unsafe_allow_html=True)
+    mode = st.radio(
+        "Choose mode",
+        ["🔵 BigQuery Public Dataset", "🟢 Upload my own CSV"],
+        index=0 if st.session_state.mode == "bigquery" else 1,
+        label_visibility="collapsed",
+    )
+    st.session_state.mode = "bigquery" if "BigQuery" in mode else "csv"
 
-    st.markdown('<div class="section-label">📦 Dataset</div>', unsafe_allow_html=True)
-    st.code(SOURCE_DATASET, language=None)
+    # ── CSV upload ──
+    if st.session_state.mode == "csv":
+        st.markdown('<div class="section-label">📤 Upload CSV</div>', unsafe_allow_html=True)
+        uploaded = st.file_uploader("Upload a CSV file", type=["csv"], label_visibility="collapsed")
+        if uploaded:
+            try:
+                df = pd.read_csv(io.StringIO(uploaded.read().decode("utf-8", errors="replace")))
+                st.session_state.csv_df   = df
+                st.session_state.csv_name = uploaded.name
+                st.session_state.messages = [{
+                    "role": "assistant",
+                    "content": f"✅ Loaded **{uploaded.name}** — {len(df):,} rows × {len(df.columns)} columns. Ask me anything about this data!",
+                    "sql": None, "python": None, "df": None,
+                }]
+                st.success(f"✅ {uploaded.name} loaded!")
+            except Exception as e:
+                st.error(f"Failed to read CSV: {e}")
 
-    st.markdown('<div class="section-label">🗄️ Tables</div>', unsafe_allow_html=True)
-    chips = "".join(f'<span class="chip">📋 {d["table_name"]}</span>' for d in docs)
-    st.markdown(chips, unsafe_allow_html=True)
+        if st.session_state.csv_df is not None:
+            df = st.session_state.csv_df
+            st.markdown(f"""
+            <div class="stat-row">
+                <div class="stat-card card-teal">
+                    <div class="val">{len(df):,}</div><div class="lbl">Rows</div>
+                </div>
+                <div class="stat-card card-pink">
+                    <div class="val">{len(df.columns)}</div><div class="lbl">Cols</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            st.markdown('<div class="section-label">📋 Columns</div>', unsafe_allow_html=True)
+            chips = "".join(f'<span class="chip">⬡ {c}</span>' for c in df.columns)
+            st.markdown(chips, unsafe_allow_html=True)
+            with st.expander("Preview data"):
+                st.dataframe(df.head(5), use_container_width=True)
+
+    # ── BQ stats ──
+    else:
+        bq_docs, bq_vec, bq_mat, bq_meta = load_bq_index()
+        total_cols = sum(len(t["columns"]) for t in bq_meta["tables"])
+        st.markdown(f"""
+        <div class="stat-row">
+            <div class="stat-card card-purple">
+                <div class="val">{len(bq_docs)}</div><div class="lbl">Tables</div>
+            </div>
+            <div class="stat-card card-pink">
+                <div class="val">{total_cols}</div><div class="lbl">Columns</div>
+            </div>
+            <div class="stat-card card-teal">
+                <div class="val">RAG</div><div class="lbl">Method</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.markdown('<div class="section-label">📦 Dataset</div>', unsafe_allow_html=True)
+        st.code(BQ_DATASET, language=None)
+        st.markdown('<div class="section-label">🗄️ Tables</div>', unsafe_allow_html=True)
+        chips = "".join(f'<span class="chip">📋 {d["table_name"]}</span>' for d in bq_docs)
+        st.markdown(chips, unsafe_allow_html=True)
 
     st.markdown('<div class="section-label">🤖 Model</div>', unsafe_allow_html=True)
-    st.markdown(f"<div style='font-size:0.8rem; color:#a78bfa; font-weight:600;'>Llama 3.3 70B via Groq</div>", unsafe_allow_html=True)
-
+    st.markdown("<div style='font-size:0.8rem; color:#a78bfa; font-weight:600;'>Llama 3.3 70B · Groq</div>", unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown(
-        f"<div style='font-size:0.7rem; opacity:0.5; line-height:1.5;'>🔒 Read-only · {MAX_ROWS} row cap · {MAX_BYTES//(1024*1024)}MB limit per query</div>",
-        unsafe_allow_html=True
-    )
+    if st.button("🗑️ Clear chat"):
+        st.session_state.messages = [{
+            "role": "assistant",
+            "content": "👋 Chat cleared! Ask me anything.",
+            "sql": None, "python": None, "df": None,
+        }]
+        st.rerun()
 
 
-# ── Hero header ───────────────────────────────────────────────────────────────
-st.markdown("""
+# ── Hero ──────────────────────────────────────────────────────────────────────
+mode_badge = (
+    '<span class="mode-badge mode-bq">🔵 BigQuery Mode</span>'
+    if st.session_state.mode == "bigquery"
+    else '<span class="mode-badge mode-custom">🟢 Custom CSV Mode</span>'
+)
+st.markdown(f"""
 <div class="hero">
     <h1>🔍 BigQuery AI Data Catalog</h1>
-    <p>Ask anything about your data in plain English — I'll explain tables, columns, and generate + run SQL instantly.</p>
+    <p>Ask anything about your data in plain English — explain tables, columns, and generate + run queries instantly.</p>
+    {mode_badge}
 </div>
 """, unsafe_allow_html=True)
 
 
-# ── Chat history ──────────────────────────────────────────────────────────────
-if "messages" not in st.session_state:
-    st.session_state.messages = [{
-        "role": "assistant",
-        "content": "👋 Hi! Ask me anything about this BigQuery dataset — I can explain tables, describe columns, or generate and run SQL queries for you!",
-        "sql": None,
-        "df": None,
-    }]
-
-
+# ── Render messages ───────────────────────────────────────────────────────────
 def render_message(idx, msg):
     with st.chat_message(msg["role"]):
-        display_text = strip_sql_block(msg["content"]) if msg.get("sql") else msg["content"]
-        if display_text:
-            st.markdown(display_text)
+        code     = msg.get("sql") or msg.get("python")
+        lang     = "sql" if msg.get("sql") else "python"
+        disp_txt = strip_code_blocks(msg["content"]) if code else msg["content"]
 
-        if msg.get("sql"):
-            st.code(msg["sql"], language="sql")
+        if disp_txt:
+            st.markdown(disp_txt)
 
+        if code:
+            st.code(code, language=lang)
             if msg.get("df") is not None:
-                st.markdown(
-                    f'<div class="result-banner">✅ Returned {len(msg["df"])} rows (limited to {MAX_ROWS})</div>',
-                    unsafe_allow_html=True
-                )
-                st.dataframe(msg["df"], use_container_width=True)
+                result = msg["df"]
+                if isinstance(result, pd.DataFrame):
+                    st.markdown(
+                        f'<div class="result-banner">✅ Returned {len(result)} rows</div>',
+                        unsafe_allow_html=True
+                    )
+                    st.dataframe(result, use_container_width=True)
+                else:
+                    st.markdown(f'<div class="result-banner">✅ Result: {result}</div>', unsafe_allow_html=True)
             else:
-                with st.container():
-                    st.markdown('<div class="run-btn">', unsafe_allow_html=True)
-                    if st.button("▶ Run in BigQuery", key=f"run_{idx}"):
-                        with st.spinner("⚡ Querying BigQuery..."):
-                            try:
-                                df, _ = run_query_safely(msg["sql"])
-                                msg["df"] = df
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Query failed: {e}")
-                    st.markdown('</div>', unsafe_allow_html=True)
+                st.markdown('<div class="run-btn">', unsafe_allow_html=True)
+                btn_label = "▶ Run in BigQuery" if msg.get("sql") else "▶ Run on my data"
+                if st.button(btn_label, key=f"run_{idx}"):
+                    with st.spinner("⚡ Running..."):
+                        try:
+                            if msg.get("sql"):
+                                df_result, _ = run_bq_query(msg["sql"])
+                                msg["df"] = df_result
+                            else:
+                                result = run_pandas_query(msg["python"], st.session_state.csv_df)
+                                msg["df"] = result
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed: {e}")
+                st.markdown('</div>', unsafe_allow_html=True)
 
 
 for i, msg in enumerate(st.session_state.messages):
     render_message(i, msg)
 
 
-# ── Suggested prompts ─────────────────────────────────────────────────────────
+# ── Suggestions ───────────────────────────────────────────────────────────────
 st.markdown('<div class="section-label" style="margin-top:1.5rem;">✨ Try these</div>', unsafe_allow_html=True)
-suggestions = [
-    "📋 List all tables",
-    "🔎 What columns are in orders?",
-    "📊 Revenue by month SQL",
-    "👥 Top customers by spend",
-    "🛍️ Best selling products",
-]
+
+if st.session_state.mode == "bigquery":
+    suggestions = [
+        ("📋 List all tables",            "List all tables"),
+        ("🔎 Orders table columns",        "What columns are in the orders table?"),
+        ("📊 Revenue by month SQL",        "Generate SQL for total revenue by month"),
+        ("👥 Top customers by spend",      "Top 10 customers by total spend SQL"),
+        ("🛍️ Best selling products",       "Best selling products by quantity SQL"),
+    ]
+elif st.session_state.csv_df is not None:
+    suggestions = [
+        ("📋 Describe the dataset",        "Describe this dataset and its columns"),
+        ("📊 Show summary statistics",     "Show summary statistics for all columns"),
+        ("🔎 Find missing values",         "Which columns have missing values and how many?"),
+        ("📈 Top 10 rows by first column", f"Show top 10 rows sorted by {st.session_state.csv_df.columns[0]}"),
+        ("💡 Insights",                    "What interesting insights can you find in this data?"),
+    ]
+else:
+    suggestions = [("📤 Upload a CSV", "Upload a CSV file to get started")]
+
 clicked = None
-cols = st.columns(len(suggestions))
-for col, s in zip(cols, suggestions):
-    if col.button(s, use_container_width=True):
-        clicked = s.split(" ", 1)[1]   # strip the emoji prefix before sending as prompt
+cols    = st.columns(len(suggestions))
+for col, (label, prompt_text) in zip(cols, suggestions):
+    if col.button(label, use_container_width=True):
+        clicked = prompt_text
 
 
 # ── Chat input ────────────────────────────────────────────────────────────────
-prompt = st.chat_input("💬 Ask about your BigQuery tables...") or clicked
+prompt = st.chat_input("💬 Ask about your data...") or clicked
 
 if prompt:
-    st.session_state.messages.append({"role": "user", "content": prompt, "sql": None, "df": None})
+    if st.session_state.mode == "csv" and st.session_state.csv_df is None:
+        st.warning("⚠️ Please upload a CSV file first using the sidebar.")
+    else:
+        st.session_state.messages.append({"role": "user", "content": prompt, "sql": None, "python": None, "df": None})
 
-    with st.spinner("🧠 Thinking..."):
-        context_docs = retrieve(prompt, docs, vectorizer, doc_vectors)
-        answer       = generate(build_prompt(prompt, context_docs))
+        with st.spinner("🧠 Thinking..."):
+            if st.session_state.mode == "bigquery":
+                bq_docs, bq_vec, bq_mat, _ = load_bq_index()
+                context_docs = retrieve(prompt, bq_docs, bq_vec, bq_mat)
+                answer       = generate(build_bq_prompt(prompt, context_docs))
+                sql          = extract_sql(answer)
+                st.session_state.messages.append({
+                    "role": "assistant", "content": answer,
+                    "sql": sql, "python": None, "df": None,
+                })
+            else:
+                df           = st.session_state.csv_df
+                csv_docs, csv_vec, csv_mat = build_csv_index(df, st.session_state.csv_name)
+                context_docs = retrieve(prompt, csv_docs, csv_vec, csv_mat)
+                answer       = generate(build_csv_prompt(prompt, context_docs, df))
+                python_code  = extract_python(answer)
+                st.session_state.messages.append({
+                    "role": "assistant", "content": answer,
+                    "sql": None, "python": python_code, "df": None,
+                })
 
-    sql = extract_sql(answer)
-    st.session_state.messages.append({
-        "role": "assistant",
-        "content": answer,
-        "sql": sql,
-        "df": None,
-    })
-    st.rerun()
+        st.rerun()
