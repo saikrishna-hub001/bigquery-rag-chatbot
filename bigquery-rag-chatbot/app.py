@@ -388,30 +388,35 @@ with tab_chat:
         if st.session_state.mode == "csv" and st.session_state.csv_df is None:
             st.warning("⚠️ Upload a CSV file first.")
         else:
-            # Show user message immediately
+            # Save user message to history
+            st.session_state.messages.append({"role":"user","content":prompt,"sql":None,"python":None,"df":None})
+
+            # Show user message
             with st.chat_message("user"):
                 st.markdown(prompt)
 
-            # Generate and show answer immediately (no rerun needed)
+            # Generate answer and show immediately — NO st.rerun()
             with st.chat_message("assistant"):
-                with st.spinner("🧠 Thinking..."):
-                    try:
-                        if st.session_state.mode == "bigquery":
-                            docs, vec, mat, _ = load_bq_index()
-                            ctx    = retrieve(prompt, docs, vec, mat)
-                            answer = generate(build_bq_prompt(prompt, ctx))
-                            sql    = extract_sql(answer)
-                        else:
-                            answer = generate(build_csv_prompt(prompt, st.session_state.csv_df, st.session_state.csv_name))
-                            sql    = None
-                    except Exception as e:
-                        answer = f"⚠️ Error: {str(e)}"
+                placeholder = st.empty()
+                placeholder.markdown("🧠 Thinking...")
+                try:
+                    if st.session_state.mode == "bigquery":
+                        docs, vec, mat, _ = load_bq_index()
+                        ctx    = retrieve(prompt, docs, vec, mat)
+                        answer = generate(build_bq_prompt(prompt, ctx))
+                        sql    = extract_sql(answer)
+                    else:
+                        answer = generate(build_csv_prompt(prompt, st.session_state.csv_df, st.session_state.csv_name))
                         sql    = None
+                except Exception as e:
+                    answer = f"⚠️ Error: {str(e)}"
+                    sql    = None
 
-                # Display answer
-                py = extract_python(answer)
+                py   = extract_python(answer)
                 code = sql or py
                 lang = "sql" if sql else "python"
+
+                placeholder.empty()   # clear the "Thinking..." text
 
                 if code:
                     stripped = strip_code_blocks(answer).strip()
@@ -420,10 +425,8 @@ with tab_chat:
                 else:
                     st.markdown(answer)
 
-            # Save to history and rerun to persist
-            st.session_state.messages.append({"role":"user","content":prompt,"sql":None,"python":None,"df":None})
+            # Save assistant message to history (no rerun - message already shown above)
             st.session_state.messages.append({"role":"assistant","content":answer,"sql":sql,"python":py,"df":None})
-            st.rerun()
 
 # ══════════════ DASHBOARD TAB ═════════════════════════════════════════════════
 with tab_dash:
