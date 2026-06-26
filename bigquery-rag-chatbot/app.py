@@ -371,14 +371,15 @@ with tab_chat:
                         else:
                             st.success(f"✅ Result: {result}")
                     elif has_sql:
-                        if st.button("▶ Run in BigQuery", key=f"run_{idx}"):
-                            with st.spinner("⚡ Running..."):
+                        def make_runner(m):
+                            def run_it():
                                 try:
-                                    res, _ = run_bq_query(msg["sql"])
-                                    msg["df"] = res
-                                    st.rerun()
+                                    res, _ = run_bq_query(m["sql"])
+                                    m["df"] = res
                                 except Exception as e:
-                                    st.error(f"Run failed: {e}")
+                                    st.session_state["run_error"] = str(e)
+                            return run_it
+                        st.button("▶ Run in BigQuery", key=f"run_{idx}", on_click=make_runner(msg))
                 else:
                     st.markdown(msg["content"])
 
@@ -417,22 +418,22 @@ with tab_chat:
                         if stripped:
                             st.markdown(stripped)
                         st.code(sql, language="sql")
-                        run_clicked = st.button("▶ Run in BigQuery", key="run_new")
+                        def run_new_query():
+                            try:
+                                res, _ = run_bq_query(sql)
+                                st.session_state.messages[-1]["df"] = res
+                            except Exception as e:
+                                st.session_state["run_error"] = str(e)
+                        st.button("▶ Run in BigQuery", key="run_new", on_click=run_new_query)
                     else:
                         st.markdown(answer)
-                        run_clicked = False
 
             st.session_state.messages.append({"role":"user",      "content":prompt, "sql":None, "python":None, "df":None})
             st.session_state.messages.append({"role":"assistant", "content":answer, "sql":sql,  "python":py,   "df":None})
 
-            if run_clicked and sql:
-                with st.spinner("⚡ Running query..."):
-                    try:
-                        res, _ = run_bq_query(sql)
-                        st.session_state.messages[-1]["df"] = res
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Query failed: {e}")
+    # Show any run errors
+    if st.session_state.get("run_error"):
+        st.error(f"Query failed: {st.session_state.pop('run_error')}")
 
 # ══════════════ DASHBOARD TAB ═════════════════════════════════════════════════
 with tab_dash:
