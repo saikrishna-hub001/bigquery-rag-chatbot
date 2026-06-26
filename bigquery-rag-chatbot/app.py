@@ -383,6 +383,19 @@ with tab_chat:
                 else:
                     st.markdown(msg["content"])
 
+        # Auto-scroll to bottom of container every render
+        st.markdown("""
+        <script>
+        (function() {
+            const containers = window.parent.document.querySelectorAll('[data-testid="stVerticalBlockBorderWrapper"]');
+            if (containers.length > 0) {
+                const chatBox = containers[containers.length - 2];
+                if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
+            }
+        })();
+        </script>
+        """, unsafe_allow_html=True)
+
     # Chat input — always at bottom below the container
     prompt = st.chat_input("💬 Ask about your data...") or clicked
 
