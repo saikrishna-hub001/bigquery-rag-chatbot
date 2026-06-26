@@ -4,7 +4,7 @@
 
 **🔗 Live Demo:** https://bigquery-rag.streamlit.app/
 
-**Built by:** [Sai Krishna Pothana](https://github.com/saikrishna-hub001) · [Sandeep Reddy Gongati](https://github.com/sandeep-username)
+**Built by:** [Sai Krishna Pothana](https://github.com/saikrishna-hub001) · [Sandeep Reddy Gongati](https://github.com/sandeepgongati)
 
 ---
 
@@ -163,7 +163,7 @@ client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/bq-rag
 | Name | GitHub | LinkedIn |
 |---|---|---|
 | Sai Krishna Pothana | [@saikrishna-hub001](https://github.com/saikrishna-hub001) | [linkedin.com/in/sai-krishna001](https://linkedin.com/in/sai-krishna001) |
-| Sandeep Reddy Gongati | [@sandeep-username](https://github.com/sandeep-username) | [linkedin.com/in/sandeep-username](https://linkedin.com/in/sandeep-username) |
+| Sandeep Reddy Gongati | [@sandeepgongati](https://github.com/sandeepgongati) | [linkedin.com/in/sandeepgongati](https://www.linkedin.com/in/sandeepgongati/) |
 
 ---
 
