@@ -320,15 +320,12 @@ tab_chat, tab_dash = st.tabs(["💬  Chat", "📊  Dashboard"])
 # ══════════════ CHAT TAB ══════════════════════════════════════════════════════
 with tab_chat:
 
-    # Render all past messages from history
+    # Render all past messages from history FIRST
     for idx, msg in enumerate(st.session_state.messages):
         with st.chat_message(msg["role"]):
-            # Determine if there's executable code
             has_sql    = bool(msg.get("sql"))
-            has_python = bool(msg.get("python"))
             code       = msg.get("sql") or msg.get("python")
             lang       = "sql" if has_sql else "python"
-
             if code:
                 stripped = strip_code_blocks(msg["content"]).strip()
                 if stripped:
@@ -341,22 +338,22 @@ with tab_chat:
                         st.dataframe(result, use_container_width=True)
                     else:
                         st.success(f"✅ Result: {result}")
-                else:
-                    # Only show run button for BigQuery SQL — CSV answers are plain text
-                    if has_sql:
-                        if st.button("▶ Run in BigQuery", key=f"run_{idx}"):
-                            with st.spinner("⚡ Running..."):
-                                try:
-                                    res, _ = run_bq_query(msg["sql"])
-                                    msg["df"] = res
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Run failed: {e}")
+                elif has_sql:
+                    if st.button("▶ Run in BigQuery", key=f"run_{idx}"):
+                        with st.spinner("⚡ Running..."):
+                            try:
+                                res, _ = run_bq_query(msg["sql"])
+                                msg["df"] = res
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Run failed: {e}")
             else:
                 st.markdown(msg["content"])
 
-    # Suggestions
-    st.markdown('<div class="section-label" style="margin-top:1rem;">✨ Try these</div>', unsafe_allow_html=True)
+    st.divider()
+
+    # Suggestions — always visible at top of input area
+    st.markdown('<div class="section-label" style="margin-top:0.5rem;">✨ Try these</div>', unsafe_allow_html=True)
     if st.session_state.mode == "bigquery":
         suggs = [
             ("📋 List tables",      "List all tables and what they contain"),
@@ -407,10 +404,9 @@ with tab_chat:
                         sql    = extract_sql(answer)
                         py     = None
                     else:
-                        # CSV mode — plain text answer only, no SQL
                         answer = generate(build_csv_prompt(prompt, st.session_state.csv_df, st.session_state.csv_name))
                         sql    = None
-                        py     = None   # don't extract python — just show plain text
+                        py     = None
                 except Exception as e:
                     answer = f"⚠️ Error: {str(e)}"
                     sql    = None
@@ -418,13 +414,11 @@ with tab_chat:
 
                 placeholder.empty()
 
-                # Show answer
                 if sql:
                     stripped = strip_code_blocks(answer).strip()
                     if stripped:
                         st.markdown(stripped)
                     st.code(sql, language="sql")
-                    # Run button for BigQuery SQL only
                     run_clicked = st.button("▶ Run in BigQuery", key="run_new")
                 else:
                     st.markdown(answer)
