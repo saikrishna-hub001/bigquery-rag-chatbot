@@ -320,11 +320,7 @@ tab_chat, tab_dash = st.tabs(["💬  Chat", "📊  Dashboard"])
 # ══════════════ CHAT TAB ══════════════════════════════════════════════════════
 with tab_chat:
 
-    # st.chat_input ALWAYS sticks to the bottom of the page automatically in Streamlit
-    # Capture input first (it renders at bottom regardless of position in code)
-    prompt = st.chat_input("💬 Ask about your data...")
-
-    # Suggestion chips - show above messages
+    # Suggestion chips
     if st.session_state.mode == "bigquery":
         suggs = [
             ("📋 List tables",      "List all tables and what they contain"),
@@ -354,78 +350,77 @@ with tab_chat:
         if sc.button(label, use_container_width=True):
             clicked = ptxt
 
-    # Use suggestion click if no typed input
-    if not prompt and clicked:
-        prompt = clicked
+    # Scrollable message container
+    chat_container = st.container(height=480)
+    with chat_container:
+        for idx, msg in enumerate(st.session_state.messages):
+            with st.chat_message(msg["role"]):
+                has_sql = bool(msg.get("sql"))
+                code    = msg.get("sql") or msg.get("python")
+                lang    = "sql" if has_sql else "python"
+                if code:
+                    stripped = strip_code_blocks(msg["content"]).strip()
+                    if stripped:
+                        st.markdown(stripped)
+                    st.code(code, language=lang)
+                    if msg.get("df") is not None:
+                        result = msg["df"]
+                        if isinstance(result, (pd.DataFrame, pd.Series)):
+                            st.success(f"✅ {len(result)} rows returned")
+                            st.dataframe(result, use_container_width=True)
+                        else:
+                            st.success(f"✅ Result: {result}")
+                    elif has_sql:
+                        if st.button("▶ Run in BigQuery", key=f"run_{idx}"):
+                            with st.spinner("⚡ Running..."):
+                                try:
+                                    res, _ = run_bq_query(msg["sql"])
+                                    msg["df"] = res
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Run failed: {e}")
+                else:
+                    st.markdown(msg["content"])
 
-    # Render all past messages
-    for idx, msg in enumerate(st.session_state.messages):
-        with st.chat_message(msg["role"]):
-            has_sql = bool(msg.get("sql"))
-            code    = msg.get("sql") or msg.get("python")
-            lang    = "sql" if has_sql else "python"
-            if code:
-                stripped = strip_code_blocks(msg["content"]).strip()
-                if stripped:
-                    st.markdown(stripped)
-                st.code(code, language=lang)
-                if msg.get("df") is not None:
-                    result = msg["df"]
-                    if isinstance(result, (pd.DataFrame, pd.Series)):
-                        st.success(f"✅ {len(result)} rows returned")
-                        st.dataframe(result, use_container_width=True)
-                    else:
-                        st.success(f"✅ Result: {result}")
-                elif has_sql:
-                    if st.button("▶ Run in BigQuery", key=f"run_{idx}"):
-                        with st.spinner("⚡ Running..."):
-                            try:
-                                res, _ = run_bq_query(msg["sql"])
-                                msg["df"] = res
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Run failed: {e}")
-            else:
-                st.markdown(msg["content"])
+    # Chat input — always at bottom below the container
+    prompt = st.chat_input("💬 Ask about your data...") or clicked
 
-    # Handle new prompt
     if prompt:
         if st.session_state.mode == "csv" and st.session_state.csv_df is None:
             st.warning("⚠️ Upload a CSV file first.")
         else:
-            with st.chat_message("user"):
-                st.markdown(prompt)
-
-            with st.chat_message("assistant"):
-                placeholder = st.empty()
-                placeholder.markdown("🧠 Thinking...")
-                try:
-                    if st.session_state.mode == "bigquery":
-                        docs, vec, mat, _ = load_bq_index()
-                        ctx    = retrieve(prompt, docs, vec, mat)
-                        answer = generate(build_bq_prompt(prompt, ctx))
-                        sql    = extract_sql(answer)
-                        py     = None
-                    else:
-                        answer = generate(build_csv_prompt(prompt, st.session_state.csv_df, st.session_state.csv_name))
+            with chat_container:
+                with st.chat_message("user"):
+                    st.markdown(prompt)
+                with st.chat_message("assistant"):
+                    placeholder = st.empty()
+                    placeholder.markdown("🧠 Thinking...")
+                    try:
+                        if st.session_state.mode == "bigquery":
+                            docs, vec, mat, _ = load_bq_index()
+                            ctx    = retrieve(prompt, docs, vec, mat)
+                            answer = generate(build_bq_prompt(prompt, ctx))
+                            sql    = extract_sql(answer)
+                            py     = None
+                        else:
+                            answer = generate(build_csv_prompt(prompt, st.session_state.csv_df, st.session_state.csv_name))
+                            sql    = None
+                            py     = None
+                    except Exception as e:
+                        answer = f"⚠️ Error: {str(e)}"
                         sql    = None
                         py     = None
-                except Exception as e:
-                    answer = f"⚠️ Error: {str(e)}"
-                    sql    = None
-                    py     = None
 
-                placeholder.empty()
-
-                if sql:
-                    stripped = strip_code_blocks(answer).strip()
-                    if stripped:
-                        st.markdown(stripped)
-                    st.code(sql, language="sql")
-                    run_clicked = st.button("▶ Run in BigQuery", key="run_new")
-                else:
-                    st.markdown(answer)
-                    run_clicked = False
+                    placeholder.empty()
+                    if sql:
+                        stripped = strip_code_blocks(answer).strip()
+                        if stripped:
+                            st.markdown(stripped)
+                        st.code(sql, language="sql")
+                        run_clicked = st.button("▶ Run in BigQuery", key="run_new")
+                    else:
+                        st.markdown(answer)
+                        run_clicked = False
 
             st.session_state.messages.append({"role":"user",      "content":prompt, "sql":None, "python":None, "df":None})
             st.session_state.messages.append({"role":"assistant", "content":answer, "sql":sql,  "python":py,   "df":None})
