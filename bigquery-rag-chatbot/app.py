@@ -320,12 +320,50 @@ tab_chat, tab_dash = st.tabs(["💬  Chat", "📊  Dashboard"])
 # ══════════════ CHAT TAB ══════════════════════════════════════════════════════
 with tab_chat:
 
-    # Render all past messages from history FIRST
+    # st.chat_input ALWAYS sticks to the bottom of the page automatically in Streamlit
+    # Capture input first (it renders at bottom regardless of position in code)
+    prompt = st.chat_input("💬 Ask about your data...")
+
+    # Suggestion chips - show above messages
+    if st.session_state.mode == "bigquery":
+        suggs = [
+            ("📋 List tables",      "List all tables and what they contain"),
+            ("📊 Revenue by month", "Generate SQL for total revenue by month"),
+            ("👥 Top customers",    "Top 10 customers by total spend SQL"),
+            ("🛍️ Best products",    "Best selling products by revenue SQL"),
+            ("🔎 Orders columns",   "What columns are in the orders table?"),
+        ]
+    elif st.session_state.csv_df is not None:
+        _nc = st.session_state.csv_df.select_dtypes(include=np.number).columns.tolist()
+        _cc = st.session_state.csv_df.select_dtypes(include=["object","category"]).columns.tolist()
+        suggs = [("📋 Describe data", "Describe this dataset and explain each column")]
+        if _nc:
+            suggs.append(("📊 Summary stats", "Give me summary statistics for the numeric columns"))
+        if _cc:
+            suggs.append(("🏷️ Top categories", f"What are the most common values in the {_cc[0]} column?"))
+        suggs.append(("💡 Key insights", "What are the top 3 interesting insights from this data?"))
+        suggs.append(("🔎 Missing values", "Which columns have missing values and how many?"))
+        suggs = suggs[:5]
+    else:
+        suggs = [("📤 Upload a CSV", "Please upload a CSV file in the sidebar")]
+
+    st.markdown('<div class="section-label">✨ Try these</div>', unsafe_allow_html=True)
+    clicked = None
+    scols = st.columns(len(suggs))
+    for sc, (label, ptxt) in zip(scols, suggs):
+        if sc.button(label, use_container_width=True):
+            clicked = ptxt
+
+    # Use suggestion click if no typed input
+    if not prompt and clicked:
+        prompt = clicked
+
+    # Render all past messages
     for idx, msg in enumerate(st.session_state.messages):
         with st.chat_message(msg["role"]):
-            has_sql    = bool(msg.get("sql"))
-            code       = msg.get("sql") or msg.get("python")
-            lang       = "sql" if has_sql else "python"
+            has_sql = bool(msg.get("sql"))
+            code    = msg.get("sql") or msg.get("python")
+            lang    = "sql" if has_sql else "python"
             if code:
                 stripped = strip_code_blocks(msg["content"]).strip()
                 if stripped:
@@ -350,49 +388,14 @@ with tab_chat:
             else:
                 st.markdown(msg["content"])
 
-    st.divider()
-
-    # Suggestions — always visible at top of input area
-    st.markdown('<div class="section-label" style="margin-top:0.5rem;">✨ Try these</div>', unsafe_allow_html=True)
-    if st.session_state.mode == "bigquery":
-        suggs = [
-            ("📋 List tables",      "List all tables and what they contain"),
-            ("📊 Revenue by month", "Generate SQL for total revenue by month"),
-            ("👥 Top customers",    "Top 10 customers by total spend SQL"),
-            ("🛍️ Best products",    "Best selling products by revenue SQL"),
-            ("🔎 Orders columns",   "What columns are in the orders table?"),
-        ]
-    elif st.session_state.csv_df is not None:
-        _nc = st.session_state.csv_df.select_dtypes(include=np.number).columns.tolist()
-        _cc = st.session_state.csv_df.select_dtypes(include=["object","category"]).columns.tolist()
-        suggs = [("📋 Describe data", "Describe this dataset and explain each column")]
-        if _nc:
-            suggs.append(("📊 Summary stats", "Give me summary statistics for the numeric columns"))
-        if _cc:
-            suggs.append(("🏷️ Top categories", f"What are the most common values in the {_cc[0]} column?"))
-        suggs.append(("💡 Key insights", "What are the top 3 interesting insights from this data?"))
-        suggs.append(("🔎 Missing values", "Which columns have missing values and how many?"))
-        suggs = suggs[:5]
-    else:
-        suggs = [("📤 Upload a CSV", "Please upload a CSV file in the sidebar")]
-
-    clicked = None
-    scols = st.columns(len(suggs))
-    for sc, (label, ptxt) in zip(scols, suggs):
-        if sc.button(label, use_container_width=True):
-            clicked = ptxt
-
-    prompt = st.chat_input("💬 Ask about your data...") or clicked
-
+    # Handle new prompt
     if prompt:
         if st.session_state.mode == "csv" and st.session_state.csv_df is None:
             st.warning("⚠️ Upload a CSV file first.")
         else:
-            # Show user message immediately
             with st.chat_message("user"):
                 st.markdown(prompt)
 
-            # Generate answer and show immediately
             with st.chat_message("assistant"):
                 placeholder = st.empty()
                 placeholder.markdown("🧠 Thinking...")
@@ -424,13 +427,11 @@ with tab_chat:
                     st.markdown(answer)
                     run_clicked = False
 
-            # Save to history
-            st.session_state.messages.append({"role": "user",      "content": prompt, "sql": None, "python": None, "df": None})
-            st.session_state.messages.append({"role": "assistant", "content": answer, "sql": sql,  "python": py,   "df": None})
+            st.session_state.messages.append({"role":"user",      "content":prompt, "sql":None, "python":None, "df":None})
+            st.session_state.messages.append({"role":"assistant", "content":answer, "sql":sql,  "python":py,   "df":None})
 
-            # Execute if run button was clicked
             if run_clicked and sql:
-                with st.spinner("⚡ Running query in BigQuery..."):
+                with st.spinner("⚡ Running query..."):
                     try:
                         res, _ = run_bq_query(sql)
                         st.session_state.messages[-1]["df"] = res
