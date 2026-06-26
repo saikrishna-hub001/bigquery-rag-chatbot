@@ -320,35 +320,38 @@ tab_chat, tab_dash = st.tabs(["💬  Chat", "📊  Dashboard"])
 # ══════════════ CHAT TAB ══════════════════════════════════════════════════════
 with tab_chat:
 
-    # Render all past messages
+    # Render all past messages from history
     for idx, msg in enumerate(st.session_state.messages):
         with st.chat_message(msg["role"]):
-            code = msg.get("sql") or msg.get("python")
-            lang = "sql" if msg.get("sql") else "python"
+            # Determine if there's executable code
+            has_sql    = bool(msg.get("sql"))
+            has_python = bool(msg.get("python"))
+            code       = msg.get("sql") or msg.get("python")
+            lang       = "sql" if has_sql else "python"
+
             if code:
                 stripped = strip_code_blocks(msg["content"]).strip()
-                st.markdown(stripped or "Here's the generated code:")
+                if stripped:
+                    st.markdown(stripped)
                 st.code(code, language=lang)
                 if msg.get("df") is not None:
                     result = msg["df"]
                     if isinstance(result, (pd.DataFrame, pd.Series)):
-                        st.markdown(f'<div class="result-banner">✅ {len(result)} rows returned</div>', unsafe_allow_html=True)
+                        st.success(f"✅ {len(result)} rows returned")
                         st.dataframe(result, use_container_width=True)
                     else:
-                        st.markdown(f'<div class="result-banner">✅ {result}</div>', unsafe_allow_html=True)
+                        st.success(f"✅ Result: {result}")
                 else:
-                    btn = "▶ Run in BigQuery" if msg.get("sql") else "▶ Run on my data"
-                    if st.button(btn, key=f"run_{idx}"):
-                        with st.spinner("⚡ Running..."):
-                            try:
-                                if msg.get("sql"):
+                    # Only show run button for BigQuery SQL — CSV answers are plain text
+                    if has_sql:
+                        if st.button("▶ Run in BigQuery", key=f"run_{idx}"):
+                            with st.spinner("⚡ Running..."):
+                                try:
                                     res, _ = run_bq_query(msg["sql"])
-                                else:
-                                    res = run_pandas_code(msg["python"], st.session_state.csv_df)
-                                msg["df"] = res
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Run failed: {e}")
+                                    msg["df"] = res
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Run failed: {e}")
             else:
                 st.markdown(msg["content"])
 
@@ -367,7 +370,7 @@ with tab_chat:
         _cc = st.session_state.csv_df.select_dtypes(include=["object","category"]).columns.tolist()
         suggs = [("📋 Describe data", "Describe this dataset and explain each column")]
         if _nc:
-            suggs.append(("📊 Summary stats", f"Give me summary statistics for the numeric columns"))
+            suggs.append(("📊 Summary stats", "Give me summary statistics for the numeric columns"))
         if _cc:
             suggs.append(("🏷️ Top categories", f"What are the most common values in the {_cc[0]} column?"))
         suggs.append(("💡 Key insights", "What are the top 3 interesting insights from this data?"))
@@ -388,14 +391,11 @@ with tab_chat:
         if st.session_state.mode == "csv" and st.session_state.csv_df is None:
             st.warning("⚠️ Upload a CSV file first.")
         else:
-            # Save user message to history
-            st.session_state.messages.append({"role":"user","content":prompt,"sql":None,"python":None,"df":None})
-
-            # Show user message
+            # Show user message immediately
             with st.chat_message("user"):
                 st.markdown(prompt)
 
-            # Generate answer and show immediately — NO st.rerun()
+            # Generate answer and show immediately
             with st.chat_message("assistant"):
                 placeholder = st.empty()
                 placeholder.markdown("🧠 Thinking...")
@@ -405,42 +405,44 @@ with tab_chat:
                         ctx    = retrieve(prompt, docs, vec, mat)
                         answer = generate(build_bq_prompt(prompt, ctx))
                         sql    = extract_sql(answer)
+                        py     = None
                     else:
+                        # CSV mode — plain text answer only, no SQL
                         answer = generate(build_csv_prompt(prompt, st.session_state.csv_df, st.session_state.csv_name))
                         sql    = None
+                        py     = None   # don't extract python — just show plain text
                 except Exception as e:
                     answer = f"⚠️ Error: {str(e)}"
                     sql    = None
+                    py     = None
 
-                py   = extract_python(answer)
-                code = sql or py
-                lang = "sql" if sql else "python"
+                placeholder.empty()
 
-                placeholder.empty()   # clear the "Thinking..." text
-
-                if code:
+                # Show answer
+                if sql:
                     stripped = strip_code_blocks(answer).strip()
-                    st.markdown(stripped or "Here's the generated code:")
-                    st.code(code, language=lang)
-                    # Show run button immediately
-                    btn_label = "▶ Run in BigQuery" if sql else "▶ Run on my data"
-                    if st.button(btn_label, key="run_latest"):
-                        with st.spinner("⚡ Running..."):
-                            try:
-                                if sql:
-                                    res, _ = run_bq_query(sql)
-                                else:
-                                    res = run_pandas_code(py, st.session_state.csv_df)
-                                # Save result and rerun to show in history
-                                st.session_state.messages[-1]["df"] = res
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Run failed: {e}")
+                    if stripped:
+                        st.markdown(stripped)
+                    st.code(sql, language="sql")
+                    # Run button for BigQuery SQL only
+                    run_clicked = st.button("▶ Run in BigQuery", key="run_new")
                 else:
                     st.markdown(answer)
+                    run_clicked = False
 
-            # Save assistant message to history (no rerun - message already shown above)
-            st.session_state.messages.append({"role":"assistant","content":answer,"sql":sql,"python":py,"df":None})
+            # Save to history
+            st.session_state.messages.append({"role": "user",      "content": prompt, "sql": None, "python": None, "df": None})
+            st.session_state.messages.append({"role": "assistant", "content": answer, "sql": sql,  "python": py,   "df": None})
+
+            # Execute if run button was clicked
+            if run_clicked and sql:
+                with st.spinner("⚡ Running query in BigQuery..."):
+                    try:
+                        res, _ = run_bq_query(sql)
+                        st.session_state.messages[-1]["df"] = res
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Query failed: {e}")
 
 # ══════════════ DASHBOARD TAB ═════════════════════════════════════════════════
 with tab_dash:
