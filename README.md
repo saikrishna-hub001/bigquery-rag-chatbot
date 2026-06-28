@@ -81,7 +81,7 @@ bigquery-rag-chatbot/
 
 ---
 
-## 🚀 Setup & Deployment
+## Setup & Deployment
 
 ### Prerequisites
 - GCP account (free tier)
@@ -133,28 +133,6 @@ client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/bq-rag
 - Every query gets `LIMIT 100` automatically if missing
 - `maximum_bytes_billed` capped at 1GB per query (well within free tier)
 - RAG context restricted to indexed schema only
-
----
-
-## 💼 Resume Bullet
-
-> Built and deployed an AI-powered BigQuery data catalog assistant using RAG (TF-IDF retrieval) and Llama 3.3 70B (via Groq), enabling natural language table discovery, schema explanation, and live SQL generation/execution against BigQuery; deployed as a public web app on Streamlit Cloud at zero infrastructure cost.
-
----
-
-## 🎯 Interview Talking Points
-
-**"Walk me through the RAG pipeline"**
-> Table and column metadata is pre-processed from BigQuery's INFORMATION_SCHEMA and indexed using TF-IDF vectors. When a user asks a question, their query is vectorized with the same model and cosine similarity retrieves the top-3 most relevant tables. That schema context gets injected into the Llama 3.3 prompt before generation.
-
-**"Why TF-IDF instead of embeddings?"**
-> For a catalog of 7-10 tables, TF-IDF gives equivalent retrieval quality with zero API cost and sub-millisecond latency. At enterprise scale with hundreds of tables, I'd move to Vertex AI embeddings with a vector database like pgvector or Vertex AI Vector Search.
-
-**"How do you prevent the LLM from running expensive queries?"**
-> Two layers: a read-only GCP service account that physically cannot write or delete, and a `maximum_bytes_billed` cap of 1GB per query enforced at the BigQuery job level. Even if the LLM generates a full-table scan, it gets rejected before execution.
-
-**"How would this scale to production?"**
-> Replace the static metadata.json with a scheduled Cloud Composer (Airflow) DAG that crawls BigQuery INFORMATION_SCHEMA nightly, detects schema drift, and updates the index. Add Pub/Sub for real-time schema change notifications. The Streamlit UI would become a React frontend backed by a Cloud Run API.
 
 ---
 
